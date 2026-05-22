@@ -1,0 +1,29 @@
+{
+  "CameraCount": 1,
+  "Cameras": [
+    {
+      "Ip": "192.168.1.64",
+      "Port": 8000,
+      "User": "admin",
+      "Password": "",
+      "CommunicationNo": "CAM001",
+      "Channel": 1,
+      "PictureQuality": 0,
+      "PictureSize": 255,
+      "OutputRootDir": "E:\\CamCapture\\captures",
+      "CameraFolder": "Camera01",
+      "TriggerMode": 0,
+      "AutoTriggerIntervalMs": 1000,
+      "ManualTriggerType": 0,
+      "ManualTriggerCount": 5,
+      "ManualTriggerIntervalMs": 1000,
+      "IoProfileKey": "dry_no",
+      "IoModel": "IO-1",
+      "AlarmInput": 1,
+      "DebounceMs": 100,
+      "PulseWidthMs": 100,
+      "IoExpanded": false,
+      "PanelExpanded": true
+    }
+  ]
+}

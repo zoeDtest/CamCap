@@ -1,0 +1,53 @@
+[Version]
+Class=IEXPRESS
+SEDVersion=3
+[Options]
+PackagePurpose=InstallApp
+ShowInstallProgramWindow=1
+HideExtractAnimation=0
+UseLongFileName=1
+InsideCompressed=1
+CAB_FixedSize=0
+CAB_ResvCodeSigning=0
+RebootMode=N
+InstallPrompt=
+DisplayLicense=
+FinishMessage=CamCapture Setup Complete.
+TargetName=E:\CamCapture_Setup_v1.1.0.exe
+FriendlyName=CamCapture Setup
+AppLaunched=install.cmd
+PostInstallCmd=<None>
+AdminQuietInstCmd=
+UserQuietInstCmd=
+SourceFiles=SourceFiles
+[Strings]
+InstallPrompt=
+DisplayLicense=
+FinishMessage=CamCapture Setup Complete.
+TargetName=E:\CamCapture_Setup_v1.1.0.exe
+FriendlyName=CamCapture Setup
+AppLaunched=install.cmd
+PostInstallCmd=<None>
+FILE0="native"
+FILE1="CamCapture.deps.json"
+FILE2="CamCapture.dll"
+FILE3="CamCapture.exe"
+FILE4="camcapture.ico"
+FILE5="CamCapture.runtimeconfig.json"
+FILE6="default-camera-config.json"
+FILE7="install.cmd"
+FILE8="README.txt"
+FILE9="uninstall.cmd"
+[SourceFiles]
+SourceFiles0=E:\20260522\test\IoCameraCapture\installer\staging\
+[SourceFiles0]
+%FILE0%=
+%FILE1%=
+%FILE2%=
+%FILE3%=
+%FILE4%=
+%FILE5%=
+%FILE6%=
+%FILE7%=
+%FILE8%=
+%FILE9%=

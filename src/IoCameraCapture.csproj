@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationIcon>assets\camcapture.ico</ApplicationIcon>
+    <AssemblyName>CamCapture</AssemblyName>
+    <RootNamespace>IoCameraCapture</RootNamespace>
+    <Title>CamCapture</Title>
+    <Product>CamCapture</Product>
+    <Company>Imaging</Company>
+    <Version>1.1.0</Version>
+    <FileVersion>1.1.0.0</FileVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\参考文件\库文件\**\*.*"
+          LinkBase="native"
+          CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="assets\camcapture.ico" />
+  </ItemGroup>
+</Project>
