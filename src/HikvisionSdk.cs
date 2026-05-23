@@ -34,6 +34,9 @@ internal static class HikvisionSdk
     [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern bool SetDllDirectory(string? pathName);
 
+    [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern uint GetShortPathName(string longPath, char[] shortPath, uint bufferLength);
+
     [DllImport("HCNetSDK.dll", CallingConvention = CallingConvention.StdCall)]
     public static extern bool NET_DVR_SetSDKInitCfg(int enumType, ref NET_DVR_LOCAL_SDK_PATH inBuffer);
 

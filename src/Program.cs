@@ -481,7 +481,7 @@ internal sealed class CameraPanel : Panel
 
     private readonly ComboBox _pictureQualityBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly NumericUpDown _pictureSizeBox = new() { Minimum = 0, Maximum = 65535, Value = 255 };
-    private readonly TextBox _outputRootText = new() { Text = Path.Combine(AppContext.BaseDirectory, "captures") };
+    private readonly TextBox _outputRootText = new() { Text = DefaultOutputRootDir };
     private readonly Button _browseOutputButton = new() { Text = "浏览..." };
 
     private readonly ComboBox _triggerModeBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -513,6 +513,8 @@ internal sealed class CameraPanel : Panel
     public event Action<string, string, string>? LogGenerated;
     public event Action<string, string>? CaptureSaved;
     public event Action<int, CameraPanelConfig>? CopyTemplateRequested;
+
+    private static string DefaultOutputRootDir => Path.Combine(AppContext.BaseDirectory, "captures");
 
     public CameraPanel(int cameraIndex)
     {
@@ -1073,7 +1075,7 @@ internal sealed class CameraPanel : Panel
         _channelBox.Value = Math.Clamp(config.Channel, (int)_channelBox.Minimum, (int)_channelBox.Maximum);
         _pictureQualityBox.SelectedIndex = Math.Clamp(config.PictureQuality, 0, _pictureQualityBox.Items.Count - 1);
         _pictureSizeBox.Value = Math.Clamp(config.PictureSize, (ushort)_pictureSizeBox.Minimum, (ushort)_pictureSizeBox.Maximum);
-        _outputRootText.Text = config.OutputRootDir;
+        _outputRootText.Text = NormalizeConfiguredOutputRoot(config.OutputRootDir);
         _cameraFolderText.Text = config.CameraFolder;
         _triggerModeBox.SelectedIndex = Math.Clamp(config.TriggerMode, 0, _triggerModeBox.Items.Count - 1);
         _autoTriggerIntervalBox.Value = Math.Clamp(config.AutoTriggerIntervalMs, (int)_autoTriggerIntervalBox.Minimum, (int)_autoTriggerIntervalBox.Maximum);
@@ -1115,9 +1117,38 @@ internal sealed class CameraPanel : Panel
             AlarmInput: (uint)_alarmInputBox.Value,
             PictureSize: (ushort)_pictureSizeBox.Value,
             PictureQuality: (ushort)_pictureQualityBox.SelectedIndex,
-            OutputRootDir: Path.GetFullPath(_outputRootText.Text.Trim()),
+            OutputRootDir: ResolvePathFromAppBase(_outputRootText.Text.Trim()),
             LogDir: Path.Combine(AppContext.BaseDirectory, "SdkLog"),
             SdkDir: Path.Combine(AppContext.BaseDirectory, "native"));
+    }
+
+    private static string NormalizeConfiguredOutputRoot(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || IsBundledDevelopmentOutputRoot(value))
+        {
+            return DefaultOutputRootDir;
+        }
+
+        return ResolvePathFromAppBase(value);
+    }
+
+    private static string ResolvePathFromAppBase(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DefaultOutputRootDir;
+        }
+
+        return Path.GetFullPath(Path.IsPathFullyQualified(value)
+            ? value
+            : Path.Combine(AppContext.BaseDirectory, value));
+    }
+
+    private static bool IsBundledDevelopmentOutputRoot(string value)
+    {
+        var normalized = value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        return normalized.EndsWith(Path.DirectorySeparatorChar + "CamCapture" + Path.DirectorySeparatorChar + "captures", StringComparison.OrdinalIgnoreCase);
     }
 
     private void OnServiceLogged(string source, string message) => EmitLog(source, message);
@@ -1462,19 +1493,23 @@ internal sealed class CameraIoCaptureService : IDisposable
 
     private void ConfigureSdkPath()
     {
-        var nativeDir = _options.SdkDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var nativeDir = EnsureTrailingDirectorySeparator(GetSdkCompatiblePath(_options.SdkDir));
         var sdkPath = new HikvisionSdk.NET_DVR_LOCAL_SDK_PATH
         {
             sPath = nativeDir,
             byRes = new byte[128]
         };
 
-        HikvisionSdk.NET_DVR_SetSDKInitCfg(HikvisionSdk.NetSdkInitCfgSdkPath, ref sdkPath);
+        if (!HikvisionSdk.NET_DVR_SetSDKInitCfg(HikvisionSdk.NetSdkInitCfgSdkPath, ref sdkPath))
+        {
+            throw LastError("NET_DVR_SetSDKInitCfg(SDKPath)");
+        }
 
-        var crypto3 = Path.Combine(nativeDir, "libcrypto-3-x64.dll");
-        var ssl3 = Path.Combine(nativeDir, "libssl-3-x64.dll");
-        var crypto11 = Path.Combine(nativeDir, "ClientDemoDll", "libcrypto-1_1-x64.dll");
-        var ssl11 = Path.Combine(nativeDir, "ClientDemoDll", "libssl-1_1-x64.dll");
+        var originalNativeDir = _options.SdkDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var crypto3 = Path.Combine(originalNativeDir, "libcrypto-3-x64.dll");
+        var ssl3 = Path.Combine(originalNativeDir, "libssl-3-x64.dll");
+        var crypto11 = Path.Combine(originalNativeDir, "ClientDemoDll", "libcrypto-1_1-x64.dll");
+        var ssl11 = Path.Combine(originalNativeDir, "ClientDemoDll", "libssl-1_1-x64.dll");
 
         SetSdkInitPath(HikvisionSdk.NetSdkInitCfgLibeayPath, File.Exists(crypto3) ? crypto3 : crypto11);
         SetSdkInitPath(HikvisionSdk.NetSdkInitCfgSsleayPath, File.Exists(ssl3) ? ssl3 : ssl11);
@@ -1484,8 +1519,32 @@ internal sealed class CameraIoCaptureService : IDisposable
     {
         if (File.Exists(path))
         {
-            HikvisionSdk.NET_DVR_SetSDKInitCfg(type, ToFixedAnsiBytes(path, 256));
+            var sdkPath = GetSdkCompatiblePath(path);
+            if (!HikvisionSdk.NET_DVR_SetSDKInitCfg(type, ToFixedAnsiBytes(sdkPath, 256)))
+            {
+                throw LastError($"NET_DVR_SetSDKInitCfg({type})");
+            }
         }
+    }
+
+    private static string GetSdkCompatiblePath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var buffer = new char[260];
+        var length = HikvisionSdk.GetShortPathName(fullPath, buffer, (uint)buffer.Length);
+        if (length > 0 && length < buffer.Length)
+        {
+            return new string(buffer, 0, (int)length);
+        }
+
+        return fullPath;
+    }
+
+    private static string EnsureTrailingDirectorySeparator(string path)
+    {
+        return path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar)
+            ? path
+            : path + Path.DirectorySeparatorChar;
     }
 
     private static void SetGeneralConfig()

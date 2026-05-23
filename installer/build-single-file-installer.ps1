@@ -1,16 +1,12 @@
 $ErrorActionPreference = "Stop"
 
-$payloadSource = "E:\CamCapture"
-$payloadDir = "E:\20260522\test\IoCameraCapture\installer\single-file-payload"
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$payloadDir = Join-Path $PSScriptRoot "single-file-payload"
 $payloadZip = Join-Path $payloadDir "payload.zip"
-$sourceFile = "E:\20260522\test\IoCameraCapture\installer\SingleFileInstaller.cs"
-$iconFile = "E:\20260522\test\IoCameraCapture\assets\camcapture.ico"
-$outputExe = "E:\CamCapture\CamCapture_Setup_v1.1.0.exe"
-$csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-
-if (-not (Test-Path $payloadSource)) {
-    throw "Payload source not found: $payloadSource"
-}
+$sourceFile = Join-Path $PSScriptRoot "SingleFileInstaller.cs"
+$iconFile = Join-Path $repoRoot "camcapture.ico"
+$outputExe = Join-Path $repoRoot "CamCapture_Setup_v1.1.0.exe"
+$csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 
 if (-not (Test-Path $csc)) {
     throw "C# compiler not found: $csc"
@@ -21,14 +17,28 @@ if (Test-Path $payloadDir) {
 }
 New-Item -ItemType Directory -Path $payloadDir | Out-Null
 
-$payloadItems = Get-ChildItem -LiteralPath $payloadSource -Force |
-    Where-Object { $_.Name -notlike "CamCapture_Setup_*.exe" }
+$payloadItems = @(
+    "CamCapture.exe",
+    "CamCapture.dll",
+    "CamCapture.deps.json",
+    "CamCapture.runtimeconfig.json",
+    "camcapture.ico",
+    "default-camera-config.json",
+    "README.txt",
+    "run.ps1",
+    "native"
+)
 
-if (-not $payloadItems) {
-    throw "No payload files found in: $payloadSource"
+foreach ($item in $payloadItems) {
+    $source = Join-Path $repoRoot $item
+    if (-not (Test-Path $source)) {
+        throw "Payload item not found: $source"
+    }
+
+    Copy-Item -LiteralPath $source -Destination $payloadDir -Recurse -Force
 }
 
-Compress-Archive -LiteralPath $payloadItems.FullName -DestinationPath $payloadZip -CompressionLevel Optimal
+Compress-Archive -LiteralPath (Get-ChildItem -LiteralPath $payloadDir -Force).FullName -DestinationPath $payloadZip -CompressionLevel Optimal
 
 if (Test-Path $outputExe) {
     Remove-Item -LiteralPath $outputExe -Force

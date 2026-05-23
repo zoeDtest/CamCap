@@ -10,7 +10,7 @@
       "Channel": 1,
       "PictureQuality": 0,
       "PictureSize": 255,
-      "OutputRootDir": "E:\\CamCapture\\captures",
+      "OutputRootDir": "captures",
       "CameraFolder": "Camera01",
       "TriggerMode": 0,
       "AutoTriggerIntervalMs": 1000,

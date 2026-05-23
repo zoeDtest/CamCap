@@ -1,14 +1,9 @@
 $ErrorActionPreference = "Stop"
 
-$projectRoot = Split-Path $PSScriptRoot -Parent
-$releaseDir = Join-Path $projectRoot "bin\Release\net8.0-windows\win-x64"
-$stagingDir = Join-Path $projectRoot "installer\staging"
-$outputExe = "E:\CamCapture_Setup_v1.1.0.exe"
-$sedPath = Join-Path $projectRoot "installer\camcapture-installer.sed"
-
-if (-not (Test-Path $releaseDir)) {
-    throw "Release directory not found: $releaseDir"
-}
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$stagingDir = Join-Path $PSScriptRoot "staging"
+$outputExe = Join-Path $repoRoot "CamCapture_Setup_v1.1.0.exe"
+$sedPath = Join-Path $PSScriptRoot "camcapture-installer.sed"
 
 if (Test-Path $stagingDir) {
     Remove-Item -LiteralPath $stagingDir -Recurse -Force
@@ -16,24 +11,27 @@ if (Test-Path $stagingDir) {
 
 New-Item -ItemType Directory -Path $stagingDir | Out-Null
 
-$filesToCopy = @(
+$payloadItems = @(
     "CamCapture.exe",
     "CamCapture.dll",
     "CamCapture.deps.json",
     "CamCapture.runtimeconfig.json",
     "default-camera-config.json",
     "README.txt",
-    "camcapture.ico"
+    "camcapture.ico",
+    "run.ps1",
+    "native"
 )
 
-foreach ($file in $filesToCopy) {
-    $src = Join-Path "E:\CamCapture" $file
-    if (Test-Path $src) {
-        Copy-Item -LiteralPath $src -Destination $stagingDir
+foreach ($item in $payloadItems) {
+    $source = Join-Path $repoRoot $item
+    if (-not (Test-Path $source)) {
+        throw "Payload item not found: $source"
     }
+
+    Copy-Item -LiteralPath $source -Destination $stagingDir -Recurse -Force
 }
 
-Copy-Item -LiteralPath (Join-Path "E:\CamCapture" "native") -Destination $stagingDir -Recurse
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install.cmd") -Destination $stagingDir
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall.cmd") -Destination $stagingDir
 
@@ -86,7 +84,7 @@ $($sourceLines -join "`r`n")
 
 Set-Content -LiteralPath $sedPath -Value $sed -Encoding ASCII
 
-$iexpress = "$env:WINDIR\System32\iexpress.exe"
+$iexpress = Join-Path $env:WINDIR "System32\iexpress.exe"
 if (-not (Test-Path $iexpress)) {
     throw "IExpress not found: $iexpress"
 }
