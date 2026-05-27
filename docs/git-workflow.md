@@ -1,30 +1,37 @@
-# Git Workflow
+# Git 工作流
 
-This repository uses a simple personal-developer workflow.
+本仓库采用适合个人开发者的简洁分支管理方式，目标是保持 `main` 稳定、提交历史清晰，并且可以随时回溯到发布版本。
 
-## Branches
+## 分支说明
 
-- `main`: stable, runnable code only. Keep this branch clean.
-- `develop`: daily integration branch for tested local work before release.
-- `feature/<name>`: short-lived work branches for experiments and incremental commits.
-- `release/<version>`: frozen release branch for a published version.
+- `main`：稳定分支，只保存已经验证可运行的代码。
+- `develop`：日常开发整合分支，用于保存已经完成本地验证的改动。
+- `feature/<name>`：短期功能分支，用于实验、新功能或多次小步提交。
+- `release/<version>`：发布分支，用于冻结某个已经发布的版本。
 
-## Daily Work
+## 日常开发流程
+
+开始新工作前，先切到 `develop` 并拉取最新代码：
 
 ```powershell
 git checkout develop
 git pull origin develop
+```
+
+为当前任务创建功能分支：
+
+```powershell
 git checkout -b feature/<short-name>
 ```
 
-Commit small steps on the feature branch:
+在功能分支上可以多次小步提交：
 
 ```powershell
 git add <files>
 git commit -m "wip: describe the step"
 ```
 
-When the feature is ready, squash it into `develop`:
+功能完成并测试通过后，合并回 `develop`。建议使用 `--squash` 把零散提交整理成一条清晰提交：
 
 ```powershell
 git checkout develop
@@ -34,9 +41,9 @@ git branch -d feature/<short-name>
 git push origin develop
 ```
 
-## Release
+## 发布流程
 
-Only release stable builds from `main`.
+只从 `main` 发布稳定版本。
 
 ```powershell
 git checkout main
@@ -50,28 +57,28 @@ git branch release/<version> v<version>
 git push origin release/<version>
 ```
 
-## Commit Message Style
+## 提交信息建议
 
-Use clear prefixes:
+推荐使用清晰的提交前缀：
 
-- `feat:` new feature
-- `fix:` bug fix
-- `perf:` performance improvement
-- `ui:` layout or visual change
-- `docs:` documentation change
-- `build:` build or installer change
-- `release:` version release
+- `feat:` 新功能
+- `fix:` 修复问题
+- `perf:` 性能优化
+- `ui:` 界面和布局调整
+- `docs:` 文档修改
+- `build:` 构建、打包或安装脚本修改
+- `release:` 版本发布
 
-Avoid vague messages such as `update`, `fix`, or `final`.
+避免使用 `update`、`fix`、`final` 这类无法说明具体内容的提交信息。
 
-## Files to Keep Out of Git
+## 不应提交到 Git 的文件
 
-Do not commit generated files:
+以下文件属于构建产物、运行数据或临时文件，不应提交到 Git：
 
-- `bin/`, `obj/`
+- `bin/`、`obj/`
 - `captures/`
-- `Logs/`, `SdkLog/`, `*.log`
-- installer staging payloads
-- generated setup `.exe` packages
+- `Logs/`、`SdkLog/`、`*.log`
+- 安装器临时 payload / staging 目录
+- 生成的安装包 `.exe`
 
-Generated installers should be kept as local artifacts or attached to GitHub releases, not committed to source history.
+安装包建议作为本地交付文件保存，或上传到 GitHub Release，不要直接提交到源码历史中。
