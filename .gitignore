@@ -2,15 +2,27 @@ bin/
 obj/
 captures/
 SdkLog/
+Logs/
 startup.log
 *.user
 *.suo
 *.pdb
+*.log
+*.tmp
+*.cache
+.vs/
+.dotnet-home/
+.nuget/
+.appdata/
+.localappdata/
 
 # Generated installer payload/staging output
 installer/staging/
 installer/single-staging/
 installer/single-file-payload/
+installer/CamCaptureInstaller/bin/
+installer/CamCaptureInstaller/obj/
 
 # Generated setup packages
 CamCapture_Setup_*.exe
+CamCapture_高速版_*.exe
