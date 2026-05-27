@@ -74,6 +74,15 @@ internal static class HikvisionSdk
     public static extern bool NET_DVR_CaptureJPEGPicture(int userId, int channel, ref NET_DVR_JPEGPARA jpegPara, string pictureFileName);
 
     [DllImport("HCNetSDK.dll", CallingConvention = CallingConvention.StdCall)]
+    public static extern bool NET_DVR_CaptureJPEGPicture_NEW(
+        int userId,
+        int channel,
+        ref NET_DVR_JPEGPARA jpegPara,
+        [Out] byte[] jpegPicBuffer,
+        uint picSize,
+        ref uint sizeReturned);
+
+    [DllImport("HCNetSDK.dll", CallingConvention = CallingConvention.StdCall)]
     public static extern uint NET_DVR_GetLastError();
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]

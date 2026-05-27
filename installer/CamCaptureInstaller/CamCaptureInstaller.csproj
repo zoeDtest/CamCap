@@ -9,11 +9,11 @@
     <AssemblyName>CamCaptureInstaller</AssemblyName>
     <RootNamespace>CamCaptureInstaller</RootNamespace>
     <ApplicationIcon>assets\camcapture.ico</ApplicationIcon>
-    <Title>CamCapture Installer</Title>
-    <Product>CamCapture Installer</Product>
+    <Title>CamCapture 高速版 Installer</Title>
+    <Product>CamCapture 高速版 Installer</Product>
     <Company>Imaging</Company>
-    <Version>1.1.0</Version>
-    <FileVersion>1.1.0.0</FileVersion>
+    <Version>1.3.0</Version>
+    <FileVersion>1.3.0.0</FileVersion>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

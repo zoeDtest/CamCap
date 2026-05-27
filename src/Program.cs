@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -49,12 +50,41 @@ internal static class Program
     }
 }
 
+internal static class AppLogWriter
+{
+    private static readonly object SyncRoot = new();
+    private static readonly string LogDir = Path.Combine(AppContext.BaseDirectory, "Logs");
+
+    public static string CurrentLogPath => Path.Combine(LogDir, $"CamCapture_{DateTime.Now:yyyyMMdd}.log");
+
+    public static void Write(string cameraName, string source, string message)
+    {
+        try
+        {
+            Directory.CreateDirectory(LogDir);
+            var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [{cameraName}] {source}: {message}{Environment.NewLine}";
+            lock (SyncRoot)
+            {
+                File.AppendAllText(CurrentLogPath, line, Encoding.UTF8);
+            }
+        }
+        catch
+        {
+        }
+    }
+}
+
 internal sealed class MainForm : Form
 {
     private readonly NumericUpDown _cameraCountBox = new() { Minimum = 1, Maximum = 10, Value = 1 };
     private readonly Button _saveConfigButton = new() { Text = "保存配置" };
     private readonly Button _loadConfigButton = new() { Text = "载入配置" };
     private readonly Button _aboutButton = new() { Text = "版本信息" };
+    private readonly Button _clearLogButton = new() { Text = "清除当前日志" };
+    private readonly RadioButton _compactLogButton = new() { Text = "简洁", AutoSize = true, Checked = true };
+    private readonly RadioButton _detailedLogButton = new() { Text = "详细", AutoSize = true };
+    private readonly Label _logModeLabel = new() { AutoSize = true };
+    private readonly ToolTip _toolTip = new();
     private readonly Panel _scrollHost = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = UiTheme.PageBackColor };
     private readonly TableLayoutPanel _cameraHost = new()
     {
@@ -94,6 +124,7 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         Program.LogStartup("MainForm constructor started.");
+        AppLogWriter.Write("系统", "启动", "MainForm constructor started.");
 
         Text = "IO 接入 SDK 相机拍照存图";
         StartPosition = FormStartPosition.CenterScreen;
@@ -109,11 +140,13 @@ internal sealed class MainForm : Form
         Shown += (_, _) =>
         {
             Program.LogStartup("Main form shown.");
+            AppLogWriter.Write("系统", "启动", "Main form shown.");
             Activate();
             BringToFront();
         };
         FormClosing += (_, _) =>
         {
+            AppLogWriter.Write("系统", "退出", "Main form closing.");
             foreach (var panel in _cameraPanels)
             {
                 panel.DisposeService();
@@ -121,6 +154,7 @@ internal sealed class MainForm : Form
         };
 
         Program.LogStartup("MainForm constructor finished.");
+        AppLogWriter.Write("系统", "启动", "MainForm constructor finished.");
     }
 
     private void BuildLayout()
@@ -135,23 +169,34 @@ internal sealed class MainForm : Form
         };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 340));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 360));
 
-        var topBar = new Panel
+        var topBar = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             Height = 54,
+            ColumnCount = 6,
+            RowCount = 1,
             BackColor = UiTheme.PanelBackColor,
             Padding = new Padding(14, 10, 14, 10),
             Margin = new Padding(0, 0, 0, 12)
         };
         topBar.Paint += (_, e) => ControlPaint.DrawBorder(e.Graphics, topBar.ClientRectangle, UiTheme.BorderColor, ButtonBorderStyle.Solid);
+        topBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        topBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        topBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        topBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        topBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        topBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        topBar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var topTitle = new Label
         {
             Text = "接入相机数量",
             AutoSize = true,
-            Location = new Point(12, 14),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Margin = new Padding(0, 0, 14, 0),
             ForeColor = UiTheme.TextColor,
             Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold)
         };
@@ -159,44 +204,34 @@ internal sealed class MainForm : Form
         {
             Text = "最多支持 10 个相机；当选择多个相机时，除第一个外默认折叠。",
             AutoSize = false,
-            Location = new Point(150, 16),
-            Size = new Size(520, 20),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            MinimumSize = new Size(180, 0),
+            Margin = new Padding(0, 0, 14, 0),
             ForeColor = UiTheme.MutedTextColor,
             AutoEllipsis = true
         };
         _cameraCountBox.Width = 72;
-        _cameraCountBox.Location = new Point(topBar.Width - 90, 11);
-        _cameraCountBox.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _cameraCountBox.Dock = DockStyle.Fill;
+        _cameraCountBox.Margin = new Padding(8, 1, 0, 1);
         _cameraCountBox.ValueChanged += (_, _) => UpdateCameraPanelVisibility();
 
         _saveConfigButton.Size = new Size(100, 30);
         _loadConfigButton.Size = new Size(100, 30);
         _aboutButton.Size = new Size(100, 30);
-        _saveConfigButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _loadConfigButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _aboutButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _saveConfigButton.Margin = new Padding(4, 0, 4, 0);
+        _loadConfigButton.Margin = new Padding(4, 0, 4, 0);
+        _aboutButton.Margin = new Padding(4, 0, 4, 0);
         _saveConfigButton.Click += (_, _) => SaveConfiguration();
         _loadConfigButton.Click += (_, _) => LoadConfiguration();
         _aboutButton.Click += (_, _) => ShowAboutDialog();
-        topBar.Resize += (_, _) =>
-        {
-            _cameraCountBox.Location = new Point(topBar.Width - 90, 11);
-            _loadConfigButton.Location = new Point(topBar.Width - 200, 10);
-            _saveConfigButton.Location = new Point(topBar.Width - 308, 10);
-            _aboutButton.Location = new Point(topBar.Width - 416, 10);
-            topHint.Width = Math.Max(220, topBar.Width - 578);
-        };
-        _loadConfigButton.Location = new Point(topBar.Width - 200, 10);
-        _saveConfigButton.Location = new Point(topBar.Width - 308, 10);
-        _aboutButton.Location = new Point(topBar.Width - 416, 10);
-        topHint.Width = Math.Max(220, topBar.Width - 578);
 
-        topBar.Controls.Add(topTitle);
-        topBar.Controls.Add(topHint);
-        topBar.Controls.Add(_aboutButton);
-        topBar.Controls.Add(_saveConfigButton);
-        topBar.Controls.Add(_loadConfigButton);
-        topBar.Controls.Add(_cameraCountBox);
+        topBar.Controls.Add(topTitle, 0, 0);
+        topBar.Controls.Add(topHint, 1, 0);
+        topBar.Controls.Add(_aboutButton, 2, 0);
+        topBar.Controls.Add(_saveConfigButton, 3, 0);
+        topBar.Controls.Add(_loadConfigButton, 4, 0);
+        topBar.Controls.Add(_cameraCountBox, 5, 0);
 
         for (var i = 0; i < 10; i++)
         {
@@ -214,17 +249,108 @@ internal sealed class MainForm : Form
         };
         lower.Resize += (_, _) => EnsureLowerSplitDistance(lower);
 
-        var logPanel = UiTheme.CreateContainer("运行日志");
+        var logPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = UiTheme.PanelBackColor,
+            Padding = new Padding(1)
+        };
+        logPanel.Paint += (_, e) => ControlPaint.DrawBorder(e.Graphics, logPanel.ClientRectangle, UiTheme.BorderColor, ButtonBorderStyle.Solid);
         _logText.Font = new Font("Consolas", 10F);
         _logText.BackColor = Color.FromArgb(249, 250, 252);
         _logText.ForeColor = Color.FromArgb(44, 62, 80);
-        logPanel.Controls.Add(new Panel
+        _clearLogButton.Size = new Size(128, 30);
+        _clearLogButton.Click += (_, _) =>
+        {
+            _logText.Clear();
+            HandleCameraLog("系统", "日志", "已清除界面日志，文件日志仍保留。");
+        };
+        _compactLogButton.ForeColor = UiTheme.TextColor;
+        _compactLogButton.Margin = new Padding(0, 7, 10, 0);
+        _compactLogButton.CheckedChanged += (_, _) =>
+        {
+            UpdateLogModeUi();
+            if (_compactLogButton.Checked)
+            {
+                HandleCameraLog("系统", "日志", "已切换为简洁日志显示。");
+            }
+        };
+        _detailedLogButton.ForeColor = UiTheme.TextColor;
+        _detailedLogButton.Margin = new Padding(0, 7, 14, 0);
+        _detailedLogButton.CheckedChanged += (_, _) =>
+        {
+            UpdateLogModeUi();
+            if (_detailedLogButton.Checked)
+            {
+                HandleCameraLog("系统", "日志", "已切换为详细日志显示。");
+            }
+        };
+        _toolTip.SetToolTip(_compactLogButton, "只显示布防、单次抓图时间戳、错误和关键状态。");
+        _toolTip.SetToolTip(_detailedLogButton, "显示每一步耗时、参数、IO、去抖和写入细节。");
+        _toolTip.SetToolTip(_clearLogButton, "只清除当前界面内容，不删除 Logs 目录中的文件日志。");
+        _logModeLabel.ForeColor = UiTheme.MutedTextColor;
+        _logModeLabel.Margin = new Padding(12, 8, 12, 0);
+        UpdateLogModeUi();
+
+        var logContent = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+            BackColor = UiTheme.PanelBackColor
+        };
+        logContent.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        logContent.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        logContent.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var logTitle = new Label
+        {
+            Text = "运行日志",
+            Dock = DockStyle.Fill,
+            Padding = new Padding(12, 10, 12, 0),
+            Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold),
+            ForeColor = UiTheme.TextColor,
+            BackColor = UiTheme.PanelBackColor
+        };
+
+        var logToolbar = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Height = 44,
+            Padding = new Padding(10, 6, 10, 6),
+            BackColor = UiTheme.PanelBackColor
+        };
+        var logModePanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Left,
+            Width = 132,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Margin = new Padding(0)
+        };
+        logModePanel.Controls.Add(_compactLogButton);
+        logModePanel.Controls.Add(_detailedLogButton);
+        _clearLogButton.Dock = DockStyle.Left;
+        _clearLogButton.Margin = new Padding(8, 0, 8, 0);
+        _logModeLabel.Dock = DockStyle.Left;
+        _logModeLabel.Width = 118;
+        _logModeLabel.TextAlign = ContentAlignment.MiddleLeft;
+
+        logToolbar.Controls.Add(_logModeLabel);
+        logToolbar.Controls.Add(_clearLogButton);
+        logToolbar.Controls.Add(logModePanel);
+
+        var logBody = new Panel
         {
             Dock = DockStyle.Fill,
             BackColor = _logText.BackColor,
             Padding = new Padding(12),
             Controls = { _logText }
-        });
+        };
+        logContent.Controls.Add(logTitle, 0, 0);
+        logContent.Controls.Add(logToolbar, 0, 1);
+        logContent.Controls.Add(logBody, 0, 2);
+        logPanel.Controls.Add(logContent);
 
         var previewPanel = UiTheme.CreateContainer("最新抓图预览");
         previewPanel.Controls.Add(_previewBox);
@@ -245,9 +371,13 @@ internal sealed class MainForm : Form
         UiTheme.StyleControl(_aboutButton);
         UiTheme.StyleControl(_saveConfigButton);
         UiTheme.StyleControl(_loadConfigButton);
+        UiTheme.StyleControl(_clearLogButton);
+        UiTheme.StyleControl(_compactLogButton);
+        UiTheme.StyleControl(_detailedLogButton);
         UiTheme.StyleNeutralButton(_aboutButton);
         UiTheme.StyleNeutralButton(_saveConfigButton);
         UiTheme.StyleNeutralButton(_loadConfigButton);
+        UiTheme.StyleNeutralButton(_clearLogButton);
     }
 
     private void CreateCameraPanels()
@@ -360,7 +490,7 @@ internal sealed class MainForm : Form
     {
         var version = typeof(MainForm).Assembly.GetName().Version?.ToString() ?? "1.0.0";
         var message =
-            "CamCapture 正式交付版" + Environment.NewLine + Environment.NewLine +
+            "CamCapture 高速版" + Environment.NewLine + Environment.NewLine +
             $"版本：{version}" + Environment.NewLine +
             $"产品：CamCapture" + Environment.NewLine +
             $"公司：Imaging" + Environment.NewLine +
@@ -383,14 +513,59 @@ internal sealed class MainForm : Form
             return;
         }
 
+        AppLogWriter.Write(cameraName, source, message);
+
+        if (!_detailedLogButton.Checked && !IsCompactLog(source, message))
+        {
+            return;
+        }
+
         _logText.AppendText($"[{DateTime.Now:HH:mm:ss}] [{cameraName}] {source}: {message}{Environment.NewLine}");
     }
 
-    private void HandleCameraCaptureSaved(string cameraName, string path)
+    private void UpdateLogModeUi()
+    {
+        _logModeLabel.Text = _detailedLogButton.Checked ? "当前：详细显示" : "当前：简洁显示";
+    }
+
+    private static bool IsCompactLog(string source, string message)
+    {
+        if (source is "错误" or "布防" or "抓图状态" or "日志")
+        {
+            return true;
+        }
+
+        if (source == "界面")
+        {
+            return message.Contains("布防", StringComparison.Ordinal) ||
+                message.Contains("停止", StringComparison.Ordinal);
+        }
+
+        if (source == "抓图")
+        {
+            return message.Contains("失败", StringComparison.Ordinal) ||
+                message.Contains("回退同步保存", StringComparison.Ordinal);
+        }
+
+        if (source == "写入")
+        {
+            return message.Contains("保存失败", StringComparison.Ordinal) ||
+                message.Contains("队列已满", StringComparison.Ordinal);
+        }
+
+        return false;
+    }
+
+    private void HandleCameraCaptureSaved(string cameraName, string path, bool showPreview)
     {
         if (InvokeRequired)
         {
-            BeginInvoke(new Action<string, string>(HandleCameraCaptureSaved), cameraName, path);
+            BeginInvoke(new Action<string, string, bool>(HandleCameraCaptureSaved), cameraName, path, showPreview);
+            return;
+        }
+
+        if (!showPreview)
+        {
             return;
         }
 
@@ -483,6 +658,7 @@ internal sealed class CameraPanel : Panel
     private readonly NumericUpDown _pictureSizeBox = new() { Minimum = 0, Maximum = 65535, Value = 255 };
     private readonly TextBox _outputRootText = new() { Text = DefaultOutputRootDir };
     private readonly Button _browseOutputButton = new() { Text = "浏览..." };
+    private readonly CheckBox _previewStreamCaptureBox = new() { Text = "预览流抓帧", AutoSize = true };
 
     private readonly ComboBox _triggerModeBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly NumericUpDown _autoTriggerIntervalBox = new() { Minimum = 50, Maximum = 600000, Increment = 100, Value = 1000 };
@@ -493,7 +669,7 @@ internal sealed class CameraPanel : Panel
     private readonly ComboBox _ioProfileBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox _ioModelText = new();
     private readonly NumericUpDown _alarmInputBox = new() { Minimum = 0, Maximum = 4096, Value = 1 };
-    private readonly NumericUpDown _debounceBox = new() { Minimum = 0, Maximum = 5000, Increment = 10, Value = 100 };
+    private readonly NumericUpDown _debounceBox = new() { Minimum = 0, Maximum = 5000, Increment = 10, Value = 20 };
     private readonly NumericUpDown _pulseWidthBox = new() { Minimum = 10, Maximum = 10000, Increment = 10, Value = 100 };
     private readonly TextBox _ioProfileSummaryText = new() { ReadOnly = true, Multiline = true };
     private readonly Button _toggleIoButton = new() { Text = "展开 IO 参数" };
@@ -511,7 +687,7 @@ internal sealed class CameraPanel : Panel
     private bool _hasStartedOnce;
 
     public event Action<string, string, string>? LogGenerated;
-    public event Action<string, string>? CaptureSaved;
+    public event Action<string, string, bool>? CaptureSaved;
     public event Action<int, CameraPanelConfig>? CopyTemplateRequested;
 
     private static string DefaultOutputRootDir => Path.Combine(AppContext.BaseDirectory, "captures");
@@ -651,6 +827,7 @@ internal sealed class CameraPanel : Panel
         UiTheme.AddLabeled(group, "图片质量", _pictureQualityBox, 0, 0);
         UiTheme.AddLabeled(group, "图片规格", _pictureSizeBox, 1, 0);
         UiTheme.AddLabeled(group, "相机文件夹", _cameraFolderText, 2, 0);
+        UiTheme.AddLabeled(group, "实验模式", _previewStreamCaptureBox, 3, 0);
 
         var outputPanel = new TableLayoutPanel
         {
@@ -745,7 +922,7 @@ internal sealed class CameraPanel : Panel
             FlowDirection = FlowDirection.LeftToRight,
             BackColor = UiTheme.PageBackColor,
             Padding = new Padding(4, 4, 4, 10),
-            WrapContents = false
+            WrapContents = true
         };
 
         var statusTitle = new Label
@@ -911,7 +1088,7 @@ internal sealed class CameraPanel : Panel
         try
         {
             var triggerTime = DateTime.Now;
-            _service?.Capture("debug_signal", triggerTime, "手动调试抓图");
+            _service?.Capture("debug_signal", triggerTime, "手动调试抓图", showPreview: true);
         }
         catch (Exception ex)
         {
@@ -1047,6 +1224,7 @@ internal sealed class CameraPanel : Panel
             Channel: (int)_channelBox.Value,
             PictureQuality: _pictureQualityBox.SelectedIndex,
             PictureSize: (ushort)_pictureSizeBox.Value,
+            UsePreviewStreamCapture: _previewStreamCaptureBox.Checked,
             OutputRootDir: _outputRootText.Text.Trim(),
             CameraFolder: _cameraFolderText.Text.Trim(),
             TriggerMode: _triggerModeBox.SelectedIndex,
@@ -1075,6 +1253,7 @@ internal sealed class CameraPanel : Panel
         _channelBox.Value = Math.Clamp(config.Channel, (int)_channelBox.Minimum, (int)_channelBox.Maximum);
         _pictureQualityBox.SelectedIndex = Math.Clamp(config.PictureQuality, 0, _pictureQualityBox.Items.Count - 1);
         _pictureSizeBox.Value = Math.Clamp(config.PictureSize, (ushort)_pictureSizeBox.Minimum, (ushort)_pictureSizeBox.Maximum);
+        _previewStreamCaptureBox.Checked = config.UsePreviewStreamCapture;
         _outputRootText.Text = NormalizeConfiguredOutputRoot(config.OutputRootDir);
         _cameraFolderText.Text = config.CameraFolder;
         _triggerModeBox.SelectedIndex = Math.Clamp(config.TriggerMode, 0, _triggerModeBox.Items.Count - 1);
@@ -1117,6 +1296,7 @@ internal sealed class CameraPanel : Panel
             AlarmInput: (uint)_alarmInputBox.Value,
             PictureSize: (ushort)_pictureSizeBox.Value,
             PictureQuality: (ushort)_pictureQualityBox.SelectedIndex,
+            UsePreviewStreamCapture: _previewStreamCaptureBox.Checked,
             OutputRootDir: ResolvePathFromAppBase(_outputRootText.Text.Trim()),
             LogDir: Path.Combine(AppContext.BaseDirectory, "SdkLog"),
             SdkDir: Path.Combine(AppContext.BaseDirectory, "native"));
@@ -1153,7 +1333,7 @@ internal sealed class CameraPanel : Panel
 
     private void OnServiceLogged(string source, string message) => EmitLog(source, message);
 
-    private void OnServiceCaptured(string path) => CaptureSaved?.Invoke(CameraDisplayName, path);
+    private void OnServiceCaptured(string path, bool showPreview) => CaptureSaved?.Invoke(CameraDisplayName, path, showPreview);
 
     private void EmitLog(string source, string message) => LogGenerated?.Invoke(CameraDisplayName, source, message);
 }
@@ -1302,6 +1482,15 @@ internal static class UiTheme
                 combo.IntegralHeight = false;
                 combo.MaxDropDownItems = 12;
                 break;
+            case CheckBox checkBox:
+                checkBox.BackColor = PanelBackColor;
+                checkBox.ForeColor = TextColor;
+                checkBox.Margin = new Padding(4, 8, 12, 8);
+                break;
+            case RadioButton radioButton:
+                radioButton.BackColor = PanelBackColor;
+                radioButton.ForeColor = TextColor;
+                break;
             case Button button:
                 button.FlatStyle = FlatStyle.Flat;
                 button.FlatAppearance.BorderSize = 1;
@@ -1356,26 +1545,107 @@ internal static class UiTheme
     }
 }
 
+internal sealed class CaptureWriteQueue : IDisposable
+{
+    private const int QueueCapacity = 128;
+
+    private readonly BlockingCollection<CaptureWriteRequest> _queue = new(QueueCapacity);
+    private readonly Action<string, string> _log;
+    private readonly Action<string, bool> _captured;
+    private readonly Task _writerTask;
+    private bool _disposed;
+
+    public CaptureWriteQueue(Action<string, string> log, Action<string, bool> captured)
+    {
+        _log = log;
+        _captured = captured;
+        _writerTask = Task.Run(ProcessQueue);
+    }
+
+    public void EnqueueOrWriteSynchronously(CaptureWriteRequest request)
+    {
+        if (_disposed || !_queue.TryAdd(request))
+        {
+            _log("写入", $"异步队列已满，改为同步写入：{request.Path}");
+            WriteRequest(request);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _queue.CompleteAdding();
+        try
+        {
+            _writerTask.Wait(TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+        }
+
+        _queue.Dispose();
+    }
+
+    private void ProcessQueue()
+    {
+        foreach (var request in _queue.GetConsumingEnumerable())
+        {
+            WriteRequest(request);
+        }
+    }
+
+    private void WriteRequest(CaptureWriteRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            using var stream = new FileStream(request.Path, FileMode.Create, FileAccess.Write, FileShare.Read, 1024 * 128, FileOptions.SequentialScan);
+            stream.Write(request.Buffer, 0, request.Count);
+            stopwatch.Stop();
+            _log("写入", $"异步保存完成：{request.Path}，写入耗时={stopwatch.ElapsedMilliseconds}ms");
+            _captured(request.Path, request.ShowPreview);
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            _log("写入", $"保存失败：{request.Path}，耗时={stopwatch.ElapsedMilliseconds}ms，错误={ex.Message}");
+        }
+    }
+}
+
+internal sealed record CaptureWriteRequest(string Path, byte[] Buffer, int Count, bool ShowPreview);
+
 internal sealed class CameraIoCaptureService : IDisposable
 {
+    private const int MaxJpegBufferBytes = 16 * 1024 * 1024;
+
     private readonly CaptureOptions _options;
     private readonly HikvisionSdk.MsgCallBackV31 _alarmCallback;
+    private readonly CaptureWriteQueue _writeQueue;
     private readonly Queue<double> _recentAcceptedIntervalsMs = new();
     private readonly Queue<double> _recentRejectedIntervalsMs = new();
+    private readonly object _directoryLock = new();
     private int _userId = -1;
     private int _alarmHandle = -1;
     private int _captureSequence;
     private bool _disposed;
+    private string? _lastCaptureDirectory;
     private DateTime _lastAcceptedTriggerUtc = DateTime.MinValue;
     private DateTime _lastObservedTriggerUtc = DateTime.MinValue;
 
     public event Action<string, string>? Logged;
-    public event Action<string>? Captured;
+    public event Action<string, bool>? Captured;
 
     public CameraIoCaptureService(CaptureOptions options)
     {
         _options = options;
         _alarmCallback = OnAlarm;
+        _writeQueue = new CaptureWriteQueue(Log, (path, showPreview) => Captured?.Invoke(path, showPreview));
     }
 
     public void Start()
@@ -1395,10 +1665,15 @@ internal sealed class CameraIoCaptureService : IDisposable
         SetGeneralConfig();
         Login();
         SetupAlarm();
+        Log("参数", $"IP={_options.Ip}:{_options.Port}，通道={_options.Channel}，输入号={_options.AlarmInput}，图片规格={_options.PictureSize}，图片质量={_options.PictureQuality}，去抖={_options.DebounceMs}ms，预览流抓帧={(_options.UsePreviewStreamCapture ? "开启" : "关闭")}，输出={_options.OutputRootDir}");
+        if (_options.UsePreviewStreamCapture)
+        {
+            Log("抓图", "预览流抓帧实验开关已开启；当前版本仍使用高速 JPEG 抓图路径，实时流抓帧将在下一步接入。");
+        }
         Log("IO", $"类型={_options.IoProfile.DisplayName}，说明={_options.IoProfile.Summary}，去抖={_options.DebounceMs}ms");
     }
 
-    public void Capture(string reason, DateTime? triggerLocalTime = null, string? triggerSource = null)
+    public void Capture(string reason, DateTime? triggerLocalTime = null, string? triggerSource = null, bool showPreview = false)
     {
         if (_userId < 0)
         {
@@ -1420,13 +1695,47 @@ internal sealed class CameraIoCaptureService : IDisposable
         }
         var cameraFolderName = SanitizeFileName(string.IsNullOrWhiteSpace(_options.CameraFolder) ? _options.CameraName : _options.CameraFolder);
         var filePrefix = SanitizeFileName($"{_options.CommunicationNo}_{_options.IoModel}");
-        var dateFolder = Path.Combine(_options.OutputRootDir, cameraFolderName, captureTime.ToString("yyyy-MM-dd"));
-        Directory.CreateDirectory(dateFolder);
+        var captureFolder = Path.Combine(_options.OutputRootDir, cameraFolderName, captureTime.ToString("yyyy-MM-dd"), captureTime.ToString("HH"));
+        EnsureCaptureDirectory(captureFolder);
 
         var fileName = $"{filePrefix}_{captureTime:yyyyMMdd_HHmmss_fff}_{reason}_{sequence:D4}.jpg";
-        var filePath = Path.Combine(dateFolder, fileName);
-        var stopwatch = Stopwatch.StartNew();
+        var filePath = Path.Combine(captureFolder, fileName);
+        Log("抓图状态", $"单次抓图：时间戳={captureTime:yyyy-MM-dd HH:mm:ss.fff}，来源={triggerSource ?? "未知触发"}，文件={fileName}");
+        var captureStopwatch = Stopwatch.StartNew();
+        var buffer = new byte[MaxJpegBufferBytes];
+        uint sizeReturned = 0;
 
+        try
+        {
+            if (!HikvisionSdk.NET_DVR_CaptureJPEGPicture_NEW(_userId, _options.Channel, ref jpeg, buffer, (uint)buffer.Length, ref sizeReturned) ||
+                sizeReturned == 0 ||
+                sizeReturned > buffer.Length)
+            {
+                captureStopwatch.Stop();
+                Log("抓图", $"内存抓图失败，回退同步保存。{LastErrorMessage("NET_DVR_CaptureJPEGPicture_NEW")}");
+                CaptureToFile(jpeg, filePath, triggerSource, showPreview);
+                return;
+            }
+        }
+        catch (EntryPointNotFoundException)
+        {
+            captureStopwatch.Stop();
+            Log("抓图", "当前 HCNetSDK.dll 不支持 NET_DVR_CaptureJPEGPicture_NEW，回退同步保存。");
+            CaptureToFile(jpeg, filePath, triggerSource, showPreview);
+            return;
+        }
+
+        captureStopwatch.Stop();
+        var imageBytes = new byte[(int)sizeReturned];
+        Buffer.BlockCopy(buffer, 0, imageBytes, 0, imageBytes.Length);
+        Log("分段", $"来源={triggerSource ?? "未知触发"}，SDK 抓图到内存={captureStopwatch.ElapsedMilliseconds}ms，图片大小={sizeReturned} bytes");
+        Log("抓图", $"已加入异步写入：{filePath}，抓图耗时={captureStopwatch.ElapsedMilliseconds}ms，时间戳={captureTime:yyyy-MM-dd HH:mm:ss.fff}");
+        _writeQueue.EnqueueOrWriteSynchronously(new CaptureWriteRequest(filePath, imageBytes, imageBytes.Length, showPreview));
+    }
+
+    private void CaptureToFile(HikvisionSdk.NET_DVR_JPEGPARA jpeg, string filePath, string? triggerSource, bool showPreview)
+    {
+        var stopwatch = Stopwatch.StartNew();
         if (!HikvisionSdk.NET_DVR_CaptureJPEGPicture(_userId, _options.Channel, ref jpeg, filePath))
         {
             stopwatch.Stop();
@@ -1435,9 +1744,28 @@ internal sealed class CameraIoCaptureService : IDisposable
         }
 
         stopwatch.Stop();
-        Log("分段", $"来源={triggerSource ?? "未知触发"}，SDK 抓图并保存={stopwatch.ElapsedMilliseconds}ms");
-        Log("抓图", $"已保存：{filePath}，耗时={stopwatch.ElapsedMilliseconds}ms，时间戳={captureTime:yyyy-MM-dd HH:mm:ss.fff}");
-        Captured?.Invoke(filePath);
+        Log("分段", $"来源={triggerSource ?? "未知触发"}，SDK 抓图并同步保存={stopwatch.ElapsedMilliseconds}ms");
+        Log("抓图", $"已保存：{filePath}，耗时={stopwatch.ElapsedMilliseconds}ms");
+        Captured?.Invoke(filePath, showPreview);
+    }
+
+    private void EnsureCaptureDirectory(string directory)
+    {
+        if (string.Equals(_lastCaptureDirectory, directory, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        lock (_directoryLock)
+        {
+            if (string.Equals(_lastCaptureDirectory, directory, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(directory);
+            _lastCaptureDirectory = directory;
+        }
     }
 
     public void SimulateExternalTrigger(int sequence)
@@ -1475,6 +1803,7 @@ internal sealed class CameraIoCaptureService : IDisposable
 
         HikvisionSdk.NET_DVR_Cleanup();
         HikvisionSdk.SetDllDirectory(null);
+        _writeQueue.Dispose();
     }
 
     private void ConfigureNativeSearchPath()
@@ -1820,6 +2149,7 @@ internal sealed record CaptureOptions(
     uint AlarmInput,
     ushort PictureSize,
     ushort PictureQuality,
+    bool UsePreviewStreamCapture,
     string OutputRootDir,
     string LogDir,
     string SdkDir);
@@ -1837,6 +2167,7 @@ internal sealed record CameraPanelConfig(
     int Channel,
     int PictureQuality,
     ushort PictureSize,
+    bool UsePreviewStreamCapture,
     string OutputRootDir,
     string CameraFolder,
     int TriggerMode,
@@ -1877,6 +2208,6 @@ internal static class IoProfileCatalog
         new("ttl_high", "TTL 5V 上升沿", "TTL-RISE", "TTL/CMOS 逻辑输入", "高电平有效", "上升沿", 20, 50),
         new("ttl_low", "TTL 5V 下降沿", "TTL-FALL", "TTL/CMOS 逻辑输入", "低电平有效", "下降沿", 20, 50),
         new("relay_pulse", "继电器脉冲 12/24V", "RELAY-PULSE", "继电器输出接 DI 隔离公共端", "脉冲有效", "脉冲边沿", 150, 200),
-        new("custom", "自定义 / 厂商专用", "CUSTOM", "自定义接线", "设备定义", "设备定义", 100, 100)
+        new("custom", "自定义 / 厂商专用", "CUSTOM", "自定义接线", "设备定义", "设备定义", 20, 100)
     ];
 }

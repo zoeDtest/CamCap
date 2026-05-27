@@ -10,11 +10,11 @@
     <ApplicationIcon>assets\camcapture.ico</ApplicationIcon>
     <AssemblyName>CamCapture</AssemblyName>
     <RootNamespace>IoCameraCapture</RootNamespace>
-    <Title>CamCapture</Title>
-    <Product>CamCapture</Product>
+    <Title>CamCapture 高速版</Title>
+    <Product>CamCapture 高速版</Product>
     <Company>Imaging</Company>
-    <Version>1.1.0</Version>
-    <FileVersion>1.1.0.0</FileVersion>
+    <Version>1.3.0</Version>
+    <FileVersion>1.3.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
