@@ -7,6 +7,10 @@ using System.Reflection;
 using System.Text;
 using System.Windows.Forms;
 
+[assembly: AssemblyVersion("1.4.2.0")]
+[assembly: AssemblyFileVersion("1.4.2.0")]
+[assembly: AssemblyInformationalVersion("1.4.2")]
+
 internal static class SingleFileInstaller
 {
     private const string AppName = "CamCapture";

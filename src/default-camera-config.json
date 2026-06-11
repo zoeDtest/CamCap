@@ -2,7 +2,7 @@
   "CameraCount": 1,
   "Cameras": [
     {
-      "Ip": "192.168.1.64",
+      "Ip": "192.168.1.68",
       "Port": 8000,
       "User": "admin",
       "Password": "",
@@ -12,9 +12,11 @@
       "PictureSize": 255,
       "UsePreviewStreamCapture": false,
       "OutputRootDir": "captures",
+      "LimitImageCount": false,
+      "MaxImageCount": 5,
       "CameraFolder": "Camera01",
       "TriggerMode": 0,
-      "AutoTriggerIntervalMs": 1000,
+      "AutoTriggerIntervalMs": 100,
       "ManualTriggerType": 0,
       "ManualTriggerCount": 5,
       "ManualTriggerIntervalMs": 1000,

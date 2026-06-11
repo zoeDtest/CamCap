@@ -2,10 +2,10 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $payloadDir = Join-Path $PSScriptRoot "single-file-payload"
-$payloadZip = Join-Path $payloadDir "payload.zip"
+$payloadZip = Join-Path $PSScriptRoot "single-file-payload.zip"
 $sourceFile = Join-Path $PSScriptRoot "SingleFileInstaller.cs"
 $iconFile = Join-Path $repoRoot "camcapture.ico"
-$outputExe = Join-Path $repoRoot "CamCapture_Setup_v1.3.0.exe"
+$outputExe = Join-Path $repoRoot "CamCapture_Setup_v1.4.2.exe"
 $csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 
 if (-not (Test-Path $csc)) {
@@ -38,7 +38,15 @@ foreach ($item in $payloadItems) {
     Copy-Item -LiteralPath $source -Destination $payloadDir -Recurse -Force
 }
 
-Compress-Archive -LiteralPath (Get-ChildItem -LiteralPath $payloadDir -Force).FullName -DestinationPath $payloadZip -CompressionLevel Optimal
+if (Test-Path $payloadZip) {
+    Remove-Item -LiteralPath $payloadZip -Force
+}
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $payloadDir,
+    $payloadZip,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $false)
 
 if (Test-Path $outputExe) {
     Remove-Item -LiteralPath $outputExe -Force
@@ -60,5 +68,8 @@ if (Test-Path $outputExe) {
 if (-not (Test-Path $outputExe)) {
     throw "Single-file installer was not created: $outputExe"
 }
+
+Remove-Item -LiteralPath $payloadZip -Force
+Remove-Item -LiteralPath $payloadDir -Recurse -Force
 
 Get-Item $outputExe
