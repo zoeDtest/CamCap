@@ -85,7 +85,7 @@ cd E:\CamCapture\github-upload
 脚本将 `Program`、`Config`、`Dependencies`、`Launcher` 和 `Docs` 打入单文件安装器，输出到：
 
 ```text
-E:\CamCapture\Installer\CamCapture_Setup_v2.0.0.exe
+E:\CamCapture\Installer\CamCapture_Setup_v2.0.1.exe
 ```
 
 ## 提交范围
