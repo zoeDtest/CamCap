@@ -46,6 +46,7 @@
   "Startup": {
     "AutoCaptureOnLaunch": true,
     "AutoTcpOnLaunch": true,
-    "MinimizeAfterLaunch": true
+    "MinimizeAfterLaunch": true,
+    "LogEntryLimit": 100000
   }
 }

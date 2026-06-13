@@ -78,9 +78,22 @@ internal static class Program
 
 internal static class AppLogWriter
 {
+    private const int DefaultEntryLimit = 100_000;
     private static readonly object SyncRoot = new();
     private static DateTime _lastCleanupDate = DateTime.MinValue;
+    private static int _entryLimit = DefaultEntryLimit;
+    private static int _entryCount = -1;
     public static string CurrentLogPath => Path.Combine(AppPaths.LogDir, $"CamCapture_{DateTime.Now:yyyyMMdd}.log");
+
+    public static void ConfigureEntryLimit(int entryLimit)
+    {
+        lock (SyncRoot)
+        {
+            _entryLimit = Math.Clamp(entryLimit, 1_000, 1_000_000);
+            _entryCount = CountStoredEntries();
+            EnforceEntryLimit();
+        }
+    }
 
     public static void Write(string cameraName, string source, string message)
     {
@@ -92,6 +105,8 @@ internal static class AppLogWriter
             {
                 CleanupOldLogs();
                 File.AppendAllText(CurrentLogPath, line, Encoding.UTF8);
+                _entryCount = _entryCount < 0 ? CountStoredEntries() : _entryCount + 1;
+                EnforceEntryLimit();
             }
         }
         catch
@@ -128,6 +143,92 @@ internal static class AppLogWriter
             }
         }
     }
+
+    private static int CountStoredEntries()
+    {
+        if (!Directory.Exists(AppPaths.LogDir))
+        {
+            return 0;
+        }
+
+        var count = 0;
+        foreach (var file in Directory.EnumerateFiles(AppPaths.LogDir, "CamCapture_*.log", SearchOption.TopDirectoryOnly))
+        {
+            try
+            {
+                count += File.ReadLines(file).Count();
+            }
+            catch
+            {
+            }
+        }
+        return count;
+    }
+
+    private static void EnforceEntryLimit()
+    {
+        if (_entryCount <= _entryLimit || !Directory.Exists(AppPaths.LogDir))
+        {
+            return;
+        }
+
+        var entries = new List<StoredLogEntry>(_entryCount);
+        foreach (var file in Directory.EnumerateFiles(AppPaths.LogDir, "CamCapture_*.log", SearchOption.TopDirectoryOnly).OrderBy(path => path))
+        {
+            try
+            {
+                foreach (var line in File.ReadLines(file))
+                {
+                    entries.Add(new StoredLogEntry(entries.Count, file, line, IsExceptionalLine(line)));
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        var targetCount = Math.Max(1_000, (int)(_entryLimit * 0.9));
+        var keep = new HashSet<int>();
+        foreach (var entry in entries.Where(entry => entry.IsExceptional).TakeLast(targetCount))
+        {
+            keep.Add(entry.Index);
+        }
+        foreach (var entry in entries.Where(entry => !entry.IsExceptional).TakeLast(targetCount - keep.Count))
+        {
+            keep.Add(entry.Index);
+        }
+
+        foreach (var group in entries.GroupBy(entry => entry.FilePath))
+        {
+            var lines = group.Where(entry => keep.Contains(entry.Index)).Select(entry => entry.Line).ToArray();
+            try
+            {
+                if (lines.Length == 0 && !string.Equals(group.Key, CurrentLogPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Delete(group.Key);
+                }
+                else
+                {
+                    File.WriteAllLines(group.Key, lines, Encoding.UTF8);
+                }
+            }
+            catch
+            {
+            }
+        }
+        _entryCount = keep.Count;
+    }
+
+    private static bool IsExceptionalLine(string line) =>
+        line.Contains("错误", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("失败", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("异常", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("断开", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("警告", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("严重", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("队列已满", StringComparison.OrdinalIgnoreCase);
+
+    private sealed record StoredLogEntry(int Index, string FilePath, string Line, bool IsExceptional);
 }
 
 internal sealed class MainForm : Form
@@ -188,15 +289,16 @@ internal sealed class MainForm : Form
     private readonly CheckBox _autoCaptureOnLaunchBox = new() { Text = "启动程序后自动触发相机抓图", Checked = true, AutoSize = true };
     private readonly CheckBox _autoTcpOnLaunchBox = new() { Text = "启动程序后自动连接 TCP 通讯", Checked = true, AutoSize = true };
     private readonly CheckBox _minimizeAfterLaunchBox = new() { Text = "自动启动完成后最小化窗口", Checked = true, AutoSize = true };
+    private readonly NumericUpDown _logEntryLimitBox = new() { Minimum = 1_000, Maximum = 1_000_000, Increment = 10_000, Value = 100_000, ThousandsSeparator = true, Width = 110 };
 
     public MainForm()
     {
         Program.LogStartup("MainForm constructor started.");
         AppLogWriter.Write("系统", "启动", "MainForm constructor started.");
 
-        Text = "CamCapture 2.0";
+        Text = "CamCapture 2.1";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(980, 640);
+        MinimumSize = new Size(720, 500);
         Size = new Size(1100, 700);
         WindowState = FormWindowState.Normal;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -453,10 +555,10 @@ internal sealed class MainForm : Form
         _mainTabs.Dock = DockStyle.Fill;
         _mainTabs.Font = new Font("Microsoft YaHei UI", 10F);
         _mainTabs.Padding = new Point(18, 6);
-        var overviewTab = new TabPage("功能总览") { BackColor = UiTheme.PageBackColor };
-        var captureTab = new TabPage("相机抓图") { BackColor = UiTheme.PageBackColor };
-        var tcpTab = new TabPage("TCP 结果监听") { BackColor = UiTheme.PageBackColor };
-        var monitorTab = new TabPage("压力监控") { BackColor = UiTheme.PageBackColor };
+        var overviewTab = new TabPage("主体") { BackColor = UiTheme.PageBackColor };
+        var captureTab = new TabPage("图片设置") { BackColor = UiTheme.PageBackColor };
+        var tcpTab = new TabPage("报警设置") { BackColor = UiTheme.PageBackColor };
+        var monitorTab = new TabPage("预警") { BackColor = UiTheme.PageBackColor };
         overviewTab.Controls.Add(BuildOverviewPage());
         captureTab.Controls.Add(root);
         tcpTab.Controls.Add(_tcpResultPage);
@@ -477,7 +579,7 @@ internal sealed class MainForm : Form
 
         var title = new Label
         {
-            Text = "CamCapture 功能总览",
+            Text = "CamCapture 主体",
             Dock = DockStyle.Top,
             Height = 74,
             Font = new Font("Microsoft YaHei UI", 22F, FontStyle.Bold),
@@ -486,7 +588,7 @@ internal sealed class MainForm : Form
         };
         var hint = new Label
         {
-            Text = "初始设置在“相机抓图”页保存；开启相机抓图将自动连接并持续抓图。",
+            Text = "初始设置在“图片设置”页保存；开启相机抓图将自动连接并持续抓图。",
             Dock = DockStyle.Top,
             Height = 46,
             Font = new Font("Microsoft YaHei UI", 12F),
@@ -581,6 +683,24 @@ internal sealed class MainForm : Form
         }
         panel.Controls.Add(title);
         panel.Controls.AddRange([_autoCaptureOnLaunchBox, _autoTcpOnLaunchBox, _minimizeAfterLaunchBox]);
+        panel.Controls.Add(new Label
+        {
+            Text = "日志存储上限",
+            AutoSize = true,
+            Margin = new Padding(0, 5, 6, 0),
+            ForeColor = UiTheme.TextColor
+        });
+        _logEntryLimitBox.Margin = new Padding(0, 1, 4, 0);
+        _logEntryLimitBox.ValueChanged += (_, _) => AppLogWriter.ConfigureEntryLimit((int)_logEntryLimitBox.Value);
+        _toolTip.SetToolTip(_logEntryLimitBox, "达到上限后优先删除最旧的普通日志，并尽量保留异常日志。");
+        panel.Controls.Add(_logEntryLimitBox);
+        panel.Controls.Add(new Label
+        {
+            Text = "条（超限优先删除普通日志）",
+            AutoSize = true,
+            Margin = new Padding(0, 5, 18, 0),
+            ForeColor = UiTheme.MutedTextColor
+        });
         return panel;
     }
 
@@ -828,15 +948,18 @@ internal sealed class MainForm : Form
             CameraCount: (int)_cameraCountBox.Value,
             Cameras: _cameraPanels.Select(panel => panel.ExportConfig()).ToList(),
             TcpMonitor: _tcpResultPage.ExportConfig(),
-            Startup: new StartupOptions(_autoCaptureOnLaunchBox.Checked, _autoTcpOnLaunchBox.Checked, _minimizeAfterLaunchBox.Checked));
+            Startup: new StartupOptions(_autoCaptureOnLaunchBox.Checked, _autoTcpOnLaunchBox.Checked, _minimizeAfterLaunchBox.Checked, (int)_logEntryLimitBox.Value));
     }
 
     private void ApplyStartupOptions(MultiCameraConfig config)
     {
         var startup = config.Startup ?? StartupOptions.Default;
+        var logEntryLimit = startup.LogEntryLimit <= 0 ? StartupOptions.Default.LogEntryLimit : startup.LogEntryLimit;
         _autoCaptureOnLaunchBox.Checked = startup.AutoCaptureOnLaunch;
         _autoTcpOnLaunchBox.Checked = startup.AutoTcpOnLaunch;
         _minimizeAfterLaunchBox.Checked = startup.MinimizeAfterLaunch;
+        _logEntryLimitBox.Value = Math.Clamp(logEntryLimit, (int)_logEntryLimitBox.Minimum, (int)_logEntryLimitBox.Maximum);
+        AppLogWriter.ConfigureEntryLimit(logEntryLimit);
     }
 
     private void StartAllAutomaticCapture()
@@ -876,7 +999,7 @@ internal sealed class MainForm : Form
     {
         var version = typeof(MainForm).Assembly.GetName().Version?.ToString() ?? "1.0.0";
         var message =
-            "CamCapture 2.0" + Environment.NewLine + Environment.NewLine +
+            "CamCapture 2.1" + Environment.NewLine + Environment.NewLine +
             $"版本：{version}" + Environment.NewLine +
             $"产品：CamCapture" + Environment.NewLine +
             $"公司：Imaging" + Environment.NewLine +
@@ -2027,22 +2150,30 @@ internal static class UiTheme
         {
             Dock = DockStyle.Fill,
             BackColor = PanelBackColor,
-            Padding = new Padding(1)
+            Padding = new Padding(1, 43, 1, 1)
         };
         panel.Paint += (_, e) => ControlPaint.DrawBorder(e.Graphics, panel.ClientRectangle, BorderColor, ButtonBorderStyle.Solid);
 
         var header = new Label
         {
             Text = title,
-            Dock = DockStyle.Top,
-            Height = 42,
+            Location = new Point(1, 1),
+            Height = 41,
+            Width = Math.Max(0, panel.ClientSize.Width - 2),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             Padding = new Padding(12, 11, 12, 0),
             Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold),
             ForeColor = TextColor,
             BackColor = PanelBackColor
         };
         panel.Controls.Add(header);
-        panel.Controls.SetChildIndex(header, 0);
+        panel.ControlAdded += (_, e) =>
+        {
+            if (!ReferenceEquals(e.Control, header))
+            {
+                header.BringToFront();
+            }
+        };
         return panel;
     }
 
@@ -2967,9 +3098,10 @@ internal sealed record MultiCameraConfig(
 internal sealed record StartupOptions(
     bool AutoCaptureOnLaunch,
     bool AutoTcpOnLaunch,
-    bool MinimizeAfterLaunch)
+    bool MinimizeAfterLaunch,
+    int LogEntryLimit = 100_000)
 {
-    public static StartupOptions Default { get; } = new(true, true, true);
+    public static StartupOptions Default { get; } = new(true, true, true, 100_000);
 }
 
 internal sealed record CameraPanelConfig(

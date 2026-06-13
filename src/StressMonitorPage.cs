@@ -40,6 +40,7 @@ internal sealed class StressMonitorPage : UserControl
     private long _lastCaptureCount;
     private long _lastNgCount;
     private DateTime _lastLogSampleAt = DateTime.Now;
+    private int _responsiveMode = -1;
 
     public StressMonitorPage(Func<bool> cameraRunning, Func<bool> tcpRunning)
     {
@@ -91,17 +92,39 @@ internal sealed class StressMonitorPage : UserControl
         _alerts.ReadOnly = true;
         _alerts.AllowUserToAddRows = false;
         _alerts.AllowUserToDeleteRows = false;
-        _alerts.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _alerts.AllowUserToResizeColumns = true;
+        _alerts.AllowUserToResizeRows = false;
+        _alerts.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
         _alerts.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
-        _alerts.ColumnHeadersHeight = 32;
-        _alerts.RowTemplate.Height = 30;
+        _alerts.ScrollBars = ScrollBars.Both;
+        _alerts.BorderStyle = BorderStyle.None;
+        _alerts.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+        _alerts.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
+        _alerts.ColumnHeadersHeight = 40;
+        _alerts.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+        _alerts.ColumnHeadersVisible = true;
+        _alerts.EnableHeadersVisualStyles = false;
+        _alerts.GridColor = UiTheme.BorderColor;
+        _alerts.RowTemplate.Height = 38;
         _alerts.RowHeadersVisible = false;
         _alerts.BackgroundColor = UiTheme.PanelBackColor;
-        _alerts.Columns.Add("Level", "等级");
-        _alerts.Columns.Add("Parameter", "报警参数");
-        _alerts.Columns.Add("Current", "当前值");
-        _alerts.Columns.Add("Threshold", "报警阈值");
-        _alerts.Columns.Add("Suggestion", "处理建议");
+        _alerts.DefaultCellStyle.BackColor = UiTheme.PanelBackColor;
+        _alerts.DefaultCellStyle.Font = new Font("Microsoft YaHei UI", 10F);
+        _alerts.DefaultCellStyle.Padding = new Padding(8, 6, 8, 6);
+        _alerts.DefaultCellStyle.SelectionBackColor = Color.FromArgb(232, 240, 254);
+        _alerts.DefaultCellStyle.SelectionForeColor = UiTheme.TextColor;
+        _alerts.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+        _alerts.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(249, 250, 252);
+        _alerts.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(242, 245, 249);
+        _alerts.ColumnHeadersDefaultCellStyle.ForeColor = UiTheme.TextColor;
+        _alerts.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold);
+        _alerts.ColumnHeadersDefaultCellStyle.Padding = new Padding(8, 4, 8, 4);
+        _alerts.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
+        _alerts.Columns.Add(new DataGridViewTextBoxColumn { Name = "Level", HeaderText = "等级", Width = 100, MinimumWidth = 80 });
+        _alerts.Columns.Add(new DataGridViewTextBoxColumn { Name = "Parameter", HeaderText = "报警参数", Width = 190, MinimumWidth = 120 });
+        _alerts.Columns.Add(new DataGridViewTextBoxColumn { Name = "Current", HeaderText = "当前值", Width = 180, MinimumWidth = 120 });
+        _alerts.Columns.Add(new DataGridViewTextBoxColumn { Name = "Threshold", HeaderText = "报警阈值", Width = 300, MinimumWidth = 180 });
+        _alerts.Columns.Add(new DataGridViewTextBoxColumn { Name = "Suggestion", HeaderText = "处理建议", Width = 420, MinimumWidth = 240 });
 
         var alertPanel = UiTheme.CreateContainer("当前报警");
         alertPanel.Controls.Add(_alerts);
@@ -114,17 +137,17 @@ internal sealed class StressMonitorPage : UserControl
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Horizontal,
-            SplitterDistance = 190,
             Panel1MinSize = 150,
             Panel2MinSize = 120,
             BackColor = UiTheme.PageBackColor
         };
+        lower.Resize += (_, _) => EnsureLowerSplitDistance(lower);
+        lower.VisibleChanged += (_, _) => EnsureLowerSplitDistance(lower);
         lower.Panel1.Controls.Add(alertPanel);
         lower.Panel2.Controls.Add(eventPanel);
 
         var root = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 2,
             Padding = new Padding(18),
@@ -134,7 +157,90 @@ internal sealed class StressMonitorPage : UserControl
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.Controls.Add(summary, 0, 0);
         root.Controls.Add(lower, 0, 1);
-        Controls.Add(root);
+
+        var viewport = new Panel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            BackColor = UiTheme.PageBackColor
+        };
+        viewport.Controls.Add(root);
+        viewport.Resize += (_, _) => UpdateResponsiveLayout(viewport, root, summary);
+        Controls.Add(viewport);
+        UpdateResponsiveLayout(viewport, root, summary);
+    }
+
+    private void UpdateResponsiveLayout(Panel viewport, TableLayoutPanel root, GroupBox summary)
+    {
+        var availableWidth = Math.Max(1, viewport.ClientSize.Width - SystemInformation.VerticalScrollBarWidth);
+        var availableHeight = Math.Max(1, viewport.ClientSize.Height - SystemInformation.HorizontalScrollBarHeight);
+        var contentWidth = Math.Max(900, availableWidth);
+        var contentHeight = Math.Max(560, availableHeight);
+        var compact = availableWidth < 1100;
+        var fontSize = availableWidth < 900 ? 8.5F : compact ? 9F : 10F;
+
+        root.Location = Point.Empty;
+        root.Size = new Size(contentWidth, contentHeight);
+        viewport.AutoScrollMinSize = new Size(contentWidth, contentHeight);
+
+        var responsiveMode = availableWidth < 900 ? 0 : compact ? 1 : 2;
+        if (_responsiveMode == responsiveMode)
+        {
+            return;
+        }
+        _responsiveMode = responsiveMode;
+
+        UpdateAlertColumnLayout(responsiveMode);
+        summary.Font = new Font("Microsoft YaHei UI", compact ? 9F : 10F, FontStyle.Bold);
+        SetControlFont(summary, new Font("Microsoft YaHei UI", fontSize));
+        _alerts.DefaultCellStyle.Font = new Font("Microsoft YaHei UI", fontSize);
+        _alerts.ColumnHeadersDefaultCellStyle.Font = new Font("Microsoft YaHei UI", fontSize, FontStyle.Bold);
+        _alerts.ColumnHeadersHeight = compact ? 34 : 40;
+        _alerts.DefaultCellStyle.Padding = compact ? new Padding(5, 4, 5, 4) : new Padding(8, 6, 8, 6);
+        _eventLog.Font = new Font("Consolas", compact ? 8F : 9F);
+    }
+
+    private void UpdateAlertColumnLayout(int responsiveMode)
+    {
+        if (responsiveMode >= 1)
+        {
+            _alerts.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            _alerts.Columns["Level"].FillWeight = 50;
+            _alerts.Columns["Parameter"].FillWeight = 90;
+            _alerts.Columns["Current"].FillWeight = 75;
+            _alerts.Columns["Threshold"].FillWeight = 135;
+            _alerts.Columns["Suggestion"].FillWeight = 210;
+            return;
+        }
+
+        _alerts.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+        _alerts.Columns["Level"].Width = 80;
+        _alerts.Columns["Parameter"].Width = 140;
+        _alerts.Columns["Current"].Width = 130;
+        _alerts.Columns["Threshold"].Width = 220;
+        _alerts.Columns["Suggestion"].Width = 300;
+    }
+
+    private static void SetControlFont(Control parent, Font font)
+    {
+        foreach (Control control in parent.Controls)
+        {
+            control.Font = font;
+            SetControlFont(control, font);
+        }
+    }
+
+    private static void EnsureLowerSplitDistance(SplitContainer lower)
+    {
+        var available = lower.Height - lower.SplitterWidth;
+        var maximum = available - lower.Panel2MinSize;
+        if (maximum < lower.Panel1MinSize)
+        {
+            return;
+        }
+
+        var preferred = (int)(available * 0.55);
+        lower.SplitterDistance = Math.Clamp(preferred, lower.Panel1MinSize, maximum);
     }
 
     private void Evaluate()
@@ -239,6 +345,7 @@ internal sealed class StressMonitorPage : UserControl
             var index = _alerts.Rows.Add(alert.Level, alert.Parameter, alert.Current, alert.Threshold, alert.Suggestion);
             _alerts.Rows[index].DefaultCellStyle.ForeColor = alert.Level == "严重" ? UiTheme.DangerColor : Color.FromArgb(208, 132, 0);
         }
+        _alerts.ClearSelection();
         _overallStatus.Text = _activeAlerts.Values.Any(alert => alert.Level == "严重") ? "严重报警" : _activeAlerts.Count > 0 ? "存在警告" : "正常";
         _overallStatus.ForeColor = _activeAlerts.Values.Any(alert => alert.Level == "严重") ? UiTheme.DangerColor : _activeAlerts.Count > 0 ? Color.FromArgb(208, 132, 0) : UiTheme.SuccessColor;
     }
