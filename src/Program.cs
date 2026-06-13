@@ -2392,6 +2392,7 @@ internal sealed record CaptureWriteRequest(string Path, byte[] Buffer, int Count
 internal static class ImageRetentionManager
 {
     private static readonly ConcurrentDictionary<string, object> DirectoryLocks = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, DateTime> FailureLogTimes = new(StringComparer.OrdinalIgnoreCase);
 
     public static void Enforce(string rootDirectory, int maxImageCount, Action<string, string> log)
     {
@@ -2421,20 +2422,29 @@ internal static class ImageRetentionManager
                 }
 
                 var deletedCount = 0;
+                var failedCount = 0;
+                var failureExamples = new List<string>();
                 foreach (var image in images.Take(deleteCount))
                 {
-                    try
+                    if (TryDeleteImage(image, out var error))
                     {
-                        image.Delete();
                         deletedCount++;
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        log("存图清理", $"删除旧图片失败：{image.FullName}，错误：{ex.Message}");
+                        failedCount++;
+                        if (failureExamples.Count < 3)
+                        {
+                            failureExamples.Add($"{image.FullName}（{error}）");
+                        }
                     }
                 }
 
-                log("存图清理", $"图片数量超过上限 {maxImageCount}，已按时间删除最旧图片 {deletedCount} 张，目录：{normalizedRoot}");
+                if (deletedCount > 0)
+                {
+                    log("存图清理", $"图片数量超过上限 {maxImageCount}，已按时间删除最旧图片 {deletedCount} 张，目录：{normalizedRoot}");
+                }
+                LogDeleteFailures(log, "存图清理", normalizedRoot, failedCount, failureExamples);
             }
             catch (Exception ex)
             {
@@ -2467,16 +2477,21 @@ internal static class ImageRetentionManager
                     .ToList();
 
                 var deletedCount = 0;
+                var failedCount = 0;
+                var failureExamples = new List<string>();
                 foreach (var image in expiredImages)
                 {
-                    try
+                    if (TryDeleteImage(image, out var error))
                     {
-                        image.Delete();
                         deletedCount++;
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        log("存储清理", $"删除过期图片失败：{image.FullName}，错误：{ex.Message}");
+                        failedCount++;
+                        if (failureExamples.Count < 3)
+                        {
+                            failureExamples.Add($"{image.FullName}（{error}）");
+                        }
                     }
                 }
 
@@ -2484,12 +2499,61 @@ internal static class ImageRetentionManager
                 {
                     log("存储清理", $"已删除超过存储天数的图片 {deletedCount} 张，目录：{normalizedRoot}");
                 }
+                LogDeleteFailures(log, "存储清理", normalizedRoot, failedCount, failureExamples);
             }
             catch (Exception ex)
             {
                 log("存储清理", $"检查存储文件夹失败：{normalizedRoot}，错误：{ex.Message}");
             }
         }
+    }
+
+    private static bool TryDeleteImage(FileInfo image, out string error)
+    {
+        try
+        {
+            image.Refresh();
+            if ((image.Attributes & FileAttributes.ReadOnly) != 0)
+            {
+                File.SetAttributes(image.FullName, image.Attributes & ~FileAttributes.ReadOnly);
+            }
+
+            File.Delete(image.FullName);
+            error = string.Empty;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static void LogDeleteFailures(
+        Action<string, string> log,
+        string source,
+        string rootDirectory,
+        int failedCount,
+        IReadOnlyCollection<string> failureExamples)
+    {
+        if (failedCount <= 0)
+        {
+            return;
+        }
+
+        var failureKey = $"{source}|{rootDirectory}";
+        var now = DateTime.UtcNow;
+        if (FailureLogTimes.TryGetValue(failureKey, out var lastLogAt) &&
+            now - lastLogAt < TimeSpan.FromMinutes(5))
+        {
+            return;
+        }
+        FailureLogTimes[failureKey] = now;
+
+        var examples = failureExamples.Count == 0
+            ? string.Empty
+            : $"，示例：{string.Join("；", failureExamples)}";
+        log(source, $"删除旧图片失败 {failedCount} 张。请检查文件只读属性、占用状态和目录删除权限{examples}");
     }
 
     private static bool IsImageFile(string path)
