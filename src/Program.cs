@@ -2440,9 +2440,10 @@ internal static class ImageRetentionManager
                     }
                 }
 
+                var deletedDirectoryCount = deletedCount > 0 ? DeleteEmptyDirectories(normalizedRoot) : 0;
                 if (deletedCount > 0)
                 {
-                    log("存图清理", $"图片数量超过上限 {maxImageCount}，已按时间删除最旧图片 {deletedCount} 张，目录：{normalizedRoot}");
+                    log("存图清理", $"图片数量超过上限 {maxImageCount}，已按时间删除最旧图片 {deletedCount} 张、空文件夹 {deletedDirectoryCount} 个，目录：{normalizedRoot}");
                 }
                 LogDeleteFailures(log, "存图清理", normalizedRoot, failedCount, failureExamples);
             }
@@ -2495,9 +2496,10 @@ internal static class ImageRetentionManager
                     }
                 }
 
+                var deletedDirectoryCount = deletedCount > 0 ? DeleteEmptyDirectories(normalizedRoot) : 0;
                 if (deletedCount > 0)
                 {
-                    log("存储清理", $"已删除超过存储天数的图片 {deletedCount} 张，目录：{normalizedRoot}");
+                    log("存储清理", $"已删除超过存储天数的图片 {deletedCount} 张、空文件夹 {deletedDirectoryCount} 个，目录：{normalizedRoot}");
                 }
                 LogDeleteFailures(log, "存储清理", normalizedRoot, failedCount, failureExamples);
             }
@@ -2506,6 +2508,45 @@ internal static class ImageRetentionManager
                 log("存储清理", $"检查存储文件夹失败：{normalizedRoot}，错误：{ex.Message}");
             }
         }
+    }
+
+    private static int DeleteEmptyDirectories(string rootDirectory)
+    {
+        var deletedCount = 0;
+        IEnumerable<string> directories;
+        try
+        {
+            var enumerationOptions = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                AttributesToSkip = FileAttributes.ReparsePoint
+            };
+            directories = Directory.EnumerateDirectories(rootDirectory, "*", enumerationOptions)
+                .OrderByDescending(path => path.Length)
+                .ToArray();
+        }
+        catch
+        {
+            return deletedCount;
+        }
+
+        foreach (var directory in directories)
+        {
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                {
+                    Directory.Delete(directory, false);
+                    deletedCount++;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return deletedCount;
     }
 
     private static bool TryDeleteImage(FileInfo image, out string error)
