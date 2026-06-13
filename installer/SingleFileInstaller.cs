@@ -7,9 +7,9 @@ using System.Reflection;
 using System.Text;
 using System.Windows.Forms;
 
-[assembly: AssemblyVersion("2.0.2.0")]
-[assembly: AssemblyFileVersion("2.0.2.0")]
-[assembly: AssemblyInformationalVersion("2.0.2")]
+[assembly: AssemblyVersion("2.0.3.0")]
+[assembly: AssemblyFileVersion("2.0.3.0")]
+[assembly: AssemblyInformationalVersion("2.0.3")]
 
 internal static class SingleFileInstaller
 {

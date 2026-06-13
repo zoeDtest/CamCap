@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 
 namespace IoCameraCapture;
 
@@ -33,6 +32,10 @@ internal sealed class StressMonitorPage : UserControl
     private long _saveFailureCount;
     private long _sdkFailureCount;
     private long _tcpFailureCount;
+    private DateTime? _lastQueueFullAt;
+    private DateTime? _lastSaveFailureAt;
+    private DateTime? _lastSdkFailureAt;
+    private DateTime? _lastTcpFailureAt;
     private long _lastLogBytes;
     private long _lastCaptureCount;
     private long _lastNgCount;
@@ -45,7 +48,6 @@ internal sealed class StressMonitorPage : UserControl
         Dock = DockStyle.Fill;
         BackColor = UiTheme.PageBackColor;
         BuildLayout();
-        LoadRecentLog();
         _lastLogBytes = DirectorySize(AppPaths.LogDir) + DirectorySize(AppPaths.SdkLogDir);
         _lastCaptureCount = _captureCount;
         _lastNgCount = _ngCount;
@@ -90,6 +92,9 @@ internal sealed class StressMonitorPage : UserControl
         _alerts.AllowUserToAddRows = false;
         _alerts.AllowUserToDeleteRows = false;
         _alerts.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        _alerts.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+        _alerts.ColumnHeadersHeight = 32;
+        _alerts.RowTemplate.Height = 30;
         _alerts.RowHeadersVisible = false;
         _alerts.BackgroundColor = UiTheme.PanelBackColor;
         _alerts.Columns.Add("Level", "等级");
@@ -109,7 +114,9 @@ internal sealed class StressMonitorPage : UserControl
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Horizontal,
-            SplitterDistance = 260,
+            SplitterDistance = 190,
+            Panel1MinSize = 150,
+            Panel2MinSize = 120,
             BackColor = UiTheme.PageBackColor
         };
         lower.Panel1.Controls.Add(alertPanel);
@@ -163,10 +170,10 @@ internal sealed class StressMonitorPage : UserControl
             $"{capturePerSecond:F1} 张/秒", "警告 5 张/秒；严重 10 张/秒", "高频抓图会增加磁盘写入和内存压力，建议增大抓图间隔。");
         SetAlert("NG 上报频率", ngPerMinute >= 600 ? "严重" : ngPerMinute >= 120 ? "警告" : null,
             $"{ngPerMinute:F0} 次/分钟", "警告 120 次/分钟；严重 600 次/分钟", "持续高频 NG 会增加界面和日志压力，检查上游上报频率。");
-        SetAlert("写入队列已满", _queueFullCount > 0 ? "严重" : null, _queueFullCount.ToString(), "应为 0", "磁盘写入跟不上抓图速度，增大抓图间隔。");
-        SetAlert("图片保存失败", _saveFailureCount > 0 ? "严重" : null, _saveFailureCount.ToString(), "应为 0", "检查磁盘空间、目录权限和文件占用。");
-        SetAlert("相机 SDK 异常", _sdkFailureCount > 0 ? "严重" : null, _sdkFailureCount.ToString(), "应为 0", "检查网络、相机登录、SDK 错误码，必要时重新连接。");
-        SetAlert("TCP 异常", _tcpRunning() && _tcpFailureCount > 0 ? "警告" : null, _tcpFailureCount.ToString(), "运行期间应为 0", "检查 TCP 服务端和网络稳定性。");
+        SetAlert("写入队列已满", IsRecent(_lastQueueFullAt, now) ? "严重" : null, $"{_queueFullCount} 次", "最近 5 分钟应为 0", "磁盘写入跟不上抓图速度，增大抓图间隔。");
+        SetAlert("图片保存失败", IsRecent(_lastSaveFailureAt, now) ? "严重" : null, $"{_saveFailureCount} 次", "最近 5 分钟应为 0", "检查磁盘空间、目录权限和文件占用。");
+        SetAlert("相机 SDK 异常", IsRecent(_lastSdkFailureAt, now) ? "严重" : null, $"{_sdkFailureCount} 次", "最近 5 分钟应为 0", "检查网络、相机登录、SDK 错误码，必要时重新连接。");
+        SetAlert("TCP 异常", _tcpRunning() && IsRecent(_lastTcpFailureAt, now) ? "警告" : null, $"{_tcpFailureCount} 次", "当前连接正常且最近 5 分钟无异常", "检查 TCP 服务端和网络稳定性。");
 
         _runtimeValue.Text = FormatDuration(now - _startedAt);
         _memoryValue.Text = $"{privateMb:F0} MB";
@@ -191,40 +198,26 @@ internal sealed class StressMonitorPage : UserControl
         if (message.Contains("异步队列已满", StringComparison.Ordinal))
         {
             _queueFullCount++;
+            _lastQueueFullAt = DateTime.Now;
         }
         if (message.Contains("保存失败", StringComparison.Ordinal))
         {
             _saveFailureCount++;
+            _lastSaveFailureAt = DateTime.Now;
         }
         if (message.Contains("SDK 错误码", StringComparison.Ordinal) || message.Contains("NET_DVR_", StringComparison.Ordinal) && message.Contains("失败", StringComparison.Ordinal))
         {
             _sdkFailureCount++;
+            _lastSdkFailureAt = DateTime.Now;
         }
         if (message.Contains("连接异常", StringComparison.Ordinal) || message.Contains("远端已断开", StringComparison.Ordinal))
         {
             _tcpFailureCount++;
+            _lastTcpFailureAt = DateTime.Now;
         }
-    }
-
-    private void LoadRecentLog()
-    {
-        try
+        if (message.Contains("已连接", StringComparison.Ordinal) && source == "TCP")
         {
-            var path = AppLogWriter.CurrentLogPath;
-            if (!File.Exists(path))
-            {
-                return;
-            }
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            stream.Seek(Math.Max(0, stream.Length - 2 * 1024 * 1024), SeekOrigin.Begin);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-            foreach (var line in reader.ReadToEnd().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
-            {
-                AnalyzeLog(string.Empty, line);
-            }
-        }
-        catch
-        {
+            _lastTcpFailureAt = null;
         }
     }
 
@@ -266,6 +259,9 @@ internal sealed class StressMonitorPage : UserControl
     }
 
     private static string FormatDuration(TimeSpan duration) => $"{(int)duration.TotalHours:D2}:{duration.Minutes:D2}:{duration.Seconds:D2}";
+
+    private static bool IsRecent(DateTime? occurredAt, DateTime now) =>
+        occurredAt.HasValue && now - occurredAt.Value <= TimeSpan.FromMinutes(5);
 
     private sealed record MonitorAlert(string Level, string Parameter, string Current, string Threshold, string Suggestion);
 }
