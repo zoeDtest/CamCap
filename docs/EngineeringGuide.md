@@ -6,6 +6,7 @@
 - Windows x64
 - 海康威视 HCNetSDK
 - PowerShell 构建与打包脚本
+- .NET 8 Windows x64 自包含发布
 
 ## 源码仓库
 
@@ -72,7 +73,7 @@ cd E:\CamCapture\github-upload
 dotnet build src\IoCameraCapture.csproj -c Release
 ```
 
-项目版本在主程序项目、安装器项目、安装器源码和打包脚本中保持一致。
+项目版本在主程序项目、安装器项目、安装器源码和打包脚本中保持一致。正式构建使用 `dotnet publish --self-contained true`，将 .NET 8 运行支撑一并放入 `Program` 并打入安装包。
 
 ## 打包
 

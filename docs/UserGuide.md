@@ -4,6 +4,8 @@
 
 打开 `Installer` 文件夹，双击 `CamCapture_Setup_v2.0.0.exe`。选择安装位置后，安装器会创建 `CamCapture` 文件夹并生成快捷方式。
 
+安装包已包含 .NET 8 Windows x64 运行支撑，目标电脑无需联网或单独安装 .NET。
+
 ## 启动
 
 推荐双击桌面的 `CamCapture` 快捷方式。目录版也可以：

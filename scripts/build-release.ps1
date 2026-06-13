@@ -4,7 +4,7 @@ $sourceRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $releaseRoot = Resolve-Path (Join-Path $sourceRoot "..")
 $project = Join-Path $sourceRoot "src\IoCameraCapture.csproj"
 $buildRoot = Join-Path $releaseRoot ".release-build"
-$buildOutput = Join-Path $buildRoot "bin"
+$publishOutput = Join-Path $buildRoot "publish"
 $buildObject = Join-Path $buildRoot "obj\"
 
 $programDir = Join-Path $releaseRoot "Program"
@@ -22,12 +22,13 @@ foreach ($directory in @("processing", "storage", "Logs", "SdkLog")) {
     New-Item -ItemType Directory -Path (Join-Path $dataDir $directory) -Force | Out-Null
 }
 
-dotnet build $project -c Release --no-restore `
+dotnet publish $project -c Release -r win-x64 --self-contained true `
     -p:IntermediateOutputPath=$buildObject `
-    -p:OutputPath=$buildOutput
+    -p:PublishSingleFile=false `
+    -p:PublishDir=$publishOutput
 
-foreach ($file in @("CamCapture.exe", "CamCapture.dll", "CamCapture.deps.json", "CamCapture.runtimeconfig.json")) {
-    Copy-Item -LiteralPath (Join-Path $buildOutput $file) -Destination (Join-Path $programDir $file) -Force
+Get-ChildItem -LiteralPath $publishOutput -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $programDir $_.Name) -Recurse -Force
 }
 $legacyProgramConfig = Join-Path $programDir "default-camera-config.json"
 if (Test-Path $legacyProgramConfig) {
