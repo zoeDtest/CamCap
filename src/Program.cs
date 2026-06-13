@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Diagnostics;
 using System.Globalization;
+using System.Buffers;
 
 namespace IoCameraCapture;
 
@@ -78,6 +79,7 @@ internal static class Program
 internal static class AppLogWriter
 {
     private static readonly object SyncRoot = new();
+    private static DateTime _lastCleanupDate = DateTime.MinValue;
     public static string CurrentLogPath => Path.Combine(AppPaths.LogDir, $"CamCapture_{DateTime.Now:yyyyMMdd}.log");
 
     public static void Write(string cameraName, string source, string message)
@@ -88,11 +90,42 @@ internal static class AppLogWriter
             var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [{cameraName}] {source}: {message}{Environment.NewLine}";
             lock (SyncRoot)
             {
+                CleanupOldLogs();
                 File.AppendAllText(CurrentLogPath, line, Encoding.UTF8);
             }
         }
         catch
         {
+        }
+    }
+
+    private static void CleanupOldLogs()
+    {
+        if (_lastCleanupDate.Date == DateTime.Today)
+        {
+            return;
+        }
+        _lastCleanupDate = DateTime.Today;
+        var cutoff = DateTime.Now.AddDays(-14);
+        foreach (var directory in new[] { AppPaths.LogDir, AppPaths.SdkLogDir })
+        {
+            if (!Directory.Exists(directory))
+            {
+                continue;
+            }
+            foreach (var file in Directory.EnumerateFiles(directory, "*.log", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    if (File.GetLastWriteTime(file) < cutoff)
+                    {
+                        File.Delete(file);
+                    }
+                }
+                catch
+                {
+                }
+            }
         }
     }
 }
@@ -144,6 +177,7 @@ internal sealed class MainForm : Form
 
     private readonly List<CameraPanel> _cameraPanels = [];
     private readonly TcpResultPage _tcpResultPage = new();
+    private readonly StressMonitorPage _stressMonitorPage;
     private readonly TabControl _mainTabs = new();
     private readonly Label _cameraOverviewStatus = new();
     private readonly Label _tcpOverviewStatus = new();
@@ -169,6 +203,9 @@ internal sealed class MainForm : Form
         BackColor = UiTheme.PageBackColor;
         Font = new Font("Microsoft YaHei UI", 9F);
 
+        _stressMonitorPage = new StressMonitorPage(
+            () => ConfiguredCameraPanels().Any(panel => panel.IsActive),
+            () => _tcpResultPage.IsRunning);
         BuildLayout();
         _tcpResultPage.LogGenerated += HandleCameraLog;
         _tcpResultPage.ConnectionStateChanged += (_, state) => UpdateOverviewStatuses();
@@ -199,6 +236,7 @@ internal sealed class MainForm : Form
                 panel.DisposeService();
             }
             _tcpResultPage.Stop();
+            _stressMonitorPage.Stop();
         };
 
         Program.LogStartup("MainForm constructor finished.");
@@ -418,12 +456,15 @@ internal sealed class MainForm : Form
         var overviewTab = new TabPage("功能总览") { BackColor = UiTheme.PageBackColor };
         var captureTab = new TabPage("相机抓图") { BackColor = UiTheme.PageBackColor };
         var tcpTab = new TabPage("TCP 结果监听") { BackColor = UiTheme.PageBackColor };
+        var monitorTab = new TabPage("压力监控") { BackColor = UiTheme.PageBackColor };
         overviewTab.Controls.Add(BuildOverviewPage());
         captureTab.Controls.Add(root);
         tcpTab.Controls.Add(_tcpResultPage);
+        monitorTab.Controls.Add(_stressMonitorPage);
         _mainTabs.TabPages.Add(overviewTab);
         _mainTabs.TabPages.Add(captureTab);
         _mainTabs.TabPages.Add(tcpTab);
+        _mainTabs.TabPages.Add(monitorTab);
         Controls.Add(_mainTabs);
     }
 
@@ -862,7 +903,11 @@ internal sealed class MainForm : Form
             return;
         }
 
-        AppLogWriter.Write(cameraName, source, message);
+        _stressMonitorPage.RecordLog(cameraName, source, message);
+        if (_detailedLogButton.Checked || IsCompactLog(source, message))
+        {
+            AppLogWriter.Write(cameraName, source, message);
+        }
 
         if (!_detailedLogButton.Checked && !IsCompactLog(source, message))
         {
@@ -2420,8 +2465,9 @@ internal sealed class CameraIoCaptureService : IDisposable
         var filePath = Path.Combine(captureFolder, fileName);
         Log("抓图状态", $"单次抓图：时间戳={captureTime:yyyy-MM-dd HH:mm:ss.fff}，来源={triggerSource ?? "未知触发"}，文件={fileName}");
         var captureStopwatch = Stopwatch.StartNew();
-        var buffer = new byte[MaxJpegBufferBytes];
+        var buffer = ArrayPool<byte>.Shared.Rent(MaxJpegBufferBytes);
         uint sizeReturned = 0;
+        var captureSucceeded = false;
 
         try
         {
@@ -2434,6 +2480,7 @@ internal sealed class CameraIoCaptureService : IDisposable
                 CaptureToFile(jpeg, filePath, triggerSource, showPreview);
                 return;
             }
+            captureSucceeded = true;
         }
         catch (EntryPointNotFoundException)
         {
@@ -2442,10 +2489,18 @@ internal sealed class CameraIoCaptureService : IDisposable
             CaptureToFile(jpeg, filePath, triggerSource, showPreview);
             return;
         }
+        finally
+        {
+            if (!captureSucceeded)
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
 
         captureStopwatch.Stop();
         var imageBytes = new byte[(int)sizeReturned];
         Buffer.BlockCopy(buffer, 0, imageBytes, 0, imageBytes.Length);
+        ArrayPool<byte>.Shared.Return(buffer);
         Log("分段", $"来源={triggerSource ?? "未知触发"}，SDK 抓图到内存={captureStopwatch.ElapsedMilliseconds}ms，图片大小={sizeReturned} bytes");
         Log("抓图", $"已加入异步写入：{filePath}，抓图耗时={captureStopwatch.ElapsedMilliseconds}ms，时间戳={captureTime:yyyy-MM-dd HH:mm:ss.fff}");
         _writeQueue.EnqueueOrWriteSynchronously(new CaptureWriteRequest(filePath, imageBytes, imageBytes.Length, showPreview));

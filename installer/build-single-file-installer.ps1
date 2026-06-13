@@ -6,7 +6,7 @@ $payloadZip = Join-Path $PSScriptRoot "single-file-payload.zip"
 $sourceFile = Join-Path $PSScriptRoot "SingleFileInstaller.cs"
 $iconFile = Join-Path $repoRoot "Program\camcapture.ico"
 $outputDir = Join-Path $repoRoot "Installer"
-$outputExe = Join-Path $outputDir "CamCapture_Setup_v2.0.1.exe"
+$outputExe = Join-Path $outputDir "CamCapture_Setup_v2.0.2.exe"
 $csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 
 if (-not (Test-Path $csc)) {

@@ -12,8 +12,8 @@
     <Title>CamCapture 2.0 Installer</Title>
     <Product>CamCapture 2.0 Installer</Product>
     <Company>Imaging</Company>
-    <Version>2.0.1</Version>
-    <FileVersion>2.0.1.0</FileVersion>
+    <Version>2.0.2</Version>
+    <FileVersion>2.0.2.0</FileVersion>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

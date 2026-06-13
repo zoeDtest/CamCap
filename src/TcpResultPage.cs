@@ -546,6 +546,9 @@ internal static class ResultAudioPlayer
 {
     private static readonly object SyncRoot = new();
     private static System.Threading.Timer? _stopTimer;
+    private static string? _lastPath;
+    private static DateTime _lastPlayUtc = DateTime.MinValue;
+    private static readonly TimeSpan MinimumReplayInterval = TimeSpan.FromMilliseconds(500);
     private const uint SoundAsync = 0x0001;
     private const uint SoundFileName = 0x00020000;
     private const uint SoundNoDefault = 0x0002;
@@ -558,6 +561,13 @@ internal static class ResultAudioPlayer
     {
         lock (SyncRoot)
         {
+            var now = DateTime.UtcNow;
+            if (string.Equals(path, _lastPath, StringComparison.OrdinalIgnoreCase) && now - _lastPlayUtc < MinimumReplayInterval)
+            {
+                return;
+            }
+            _lastPath = path;
+            _lastPlayUtc = now;
             _stopTimer?.Dispose();
             PlaySound(path, IntPtr.Zero, SoundAsync | SoundFileName | SoundNoDefault);
             _stopTimer = new System.Threading.Timer(

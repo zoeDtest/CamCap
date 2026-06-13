@@ -16,6 +16,8 @@ github-upload/
 │  └─ default-camera-config.json 初始配置模板
 ├─ src/                         主程序源码
 │  ├─ Program.cs               界面、配置、抓图服务、日志与图片保留逻辑
+│  ├─ StressMonitorPage.cs     24H 压力监控、日志分析与参数报警
+│  ├─ TcpResultPage.cs         TCP 结果监听、解析与提示音
 │  ├─ HikvisionSdk.cs          HCNetSDK P/Invoke 定义
 │  ├─ IoCameraCapture.csproj   主程序项目与版本号
 │  └─ assets/
@@ -85,7 +87,7 @@ cd E:\CamCapture\github-upload
 脚本将 `Program`、`Config`、`Dependencies`、`Launcher` 和 `Docs` 打入单文件安装器，输出到：
 
 ```text
-E:\CamCapture\Installer\CamCapture_Setup_v2.0.1.exe
+E:\CamCapture\Installer\CamCapture_Setup_v2.0.2.exe
 ```
 
 ## 提交范围
