@@ -11,9 +11,12 @@
       "PictureQuality": 0,
       "PictureSize": 255,
       "UsePreviewStreamCapture": false,
-      "OutputRootDir": "captures",
-      "LimitImageCount": false,
+      "OutputRootDir": "Data/processing",
+      "LimitImageCount": true,
       "MaxImageCount": 5,
+      "LimitImageAge": false,
+      "RetentionFolder": "Data/storage",
+      "RetentionDuration": 90,
       "CameraFolder": "Camera01",
       "TriggerMode": 0,
       "AutoTriggerIntervalMs": 100,
@@ -28,5 +31,21 @@
       "IoExpanded": false,
       "PanelExpanded": true
     }
-  ]
+  ],
+  "TcpMonitor": {
+    "Host": "127.0.0.1",
+    "Port": 9000,
+    "StartOnLaunch": true,
+    "ParseMode": 0,
+    "Delimiter": ",",
+    "FieldIndex": 2,
+    "ResultKey": "result",
+    "PartialMessageTimeoutMs": 150,
+    "AudioPlaybackDurationMs": 1500
+  },
+  "Startup": {
+    "AutoCaptureOnLaunch": true,
+    "AutoTcpOnLaunch": true,
+    "MinimizeAfterLaunch": true
+  }
 }

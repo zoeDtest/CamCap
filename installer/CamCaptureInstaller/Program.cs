@@ -111,7 +111,9 @@ internal static class Program
 
             Directory.CreateDirectory(installDir);
             CopyDirectory(tempRoot, installDir);
-            Directory.CreateDirectory(Path.Combine(installDir, "captures"));
+            Directory.CreateDirectory(Path.Combine(installDir, "Config"));
+            Directory.CreateDirectory(Path.Combine(installDir, "Data", "processing"));
+            Directory.CreateDirectory(Path.Combine(installDir, "Data", "storage"));
             Directory.CreateDirectory(Path.Combine(installDir, "SdkLog"));
 
             CreateShortcuts(installDir, createDesktopShortcut);

@@ -1,11 +1,12 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $payloadDir = Join-Path $PSScriptRoot "single-file-payload"
 $payloadZip = Join-Path $PSScriptRoot "single-file-payload.zip"
 $sourceFile = Join-Path $PSScriptRoot "SingleFileInstaller.cs"
-$iconFile = Join-Path $repoRoot "camcapture.ico"
-$outputExe = Join-Path $repoRoot "CamCapture_Setup_v1.4.2.exe"
+$iconFile = Join-Path $repoRoot "Program\camcapture.ico"
+$outputDir = Join-Path $repoRoot "Installer"
+$outputExe = Join-Path $outputDir "CamCapture_Setup_v2.0.0.exe"
 $csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 
 if (-not (Test-Path $csc)) {
@@ -16,27 +17,28 @@ if (Test-Path $payloadDir) {
     Remove-Item -LiteralPath $payloadDir -Recurse -Force
 }
 New-Item -ItemType Directory -Path $payloadDir | Out-Null
+New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
 $payloadItems = @(
-    "CamCapture.exe",
-    "CamCapture.dll",
-    "CamCapture.deps.json",
-    "CamCapture.runtimeconfig.json",
-    "camcapture.ico",
-    "default-camera-config.json",
-    "README.txt",
-    "run.ps1",
-    "native"
+    @{ Source = "Program"; Destination = "Program" },
+    @{ Source = "Dependencies"; Destination = "Dependencies" },
+    @{ Source = "Launcher"; Destination = "Launcher" },
+    @{ Source = "Docs"; Destination = "Docs" }
 )
 
 foreach ($item in $payloadItems) {
-    $source = Join-Path $repoRoot $item
+    $source = Join-Path $repoRoot $item.Source
     if (-not (Test-Path $source)) {
         throw "Payload item not found: $source"
     }
 
-    Copy-Item -LiteralPath $source -Destination $payloadDir -Recurse -Force
+    $destination = Join-Path $payloadDir $item.Destination
+    Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
 }
+
+$payloadConfigDir = Join-Path $payloadDir "Config"
+New-Item -ItemType Directory -Path $payloadConfigDir -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $repoRoot "Config\default-camera-config.json") -Destination (Join-Path $payloadConfigDir "default-camera-config.json") -Force
 
 if (Test-Path $payloadZip) {
     Remove-Item -LiteralPath $payloadZip -Force

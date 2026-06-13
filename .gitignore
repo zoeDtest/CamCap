@@ -4,6 +4,7 @@ captures/
 SdkLog/
 Logs/
 startup.log
+config/startup-config.json
 *.user
 *.suo
 *.pdb
@@ -20,6 +21,7 @@ startup.log
 installer/staging/
 installer/single-staging/
 installer/single-file-payload/
+installer/single-file-payload.zip
 installer/CamCaptureInstaller/bin/
 installer/CamCaptureInstaller/obj/
 

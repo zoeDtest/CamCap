@@ -7,14 +7,17 @@ using System.Reflection;
 using System.Text;
 using System.Windows.Forms;
 
-[assembly: AssemblyVersion("1.4.2.0")]
-[assembly: AssemblyFileVersion("1.4.2.0")]
-[assembly: AssemblyInformationalVersion("1.4.2")]
+[assembly: AssemblyVersion("2.0.0.0")]
+[assembly: AssemblyFileVersion("2.0.0.0")]
+[assembly: AssemblyInformationalVersion("2.0.0")]
 
 internal static class SingleFileInstaller
 {
     private const string AppName = "CamCapture";
     private const string InstallerTitle = "CamCapture 安装程序";
+    private const string ProgramFolder = "Program";
+    private const string ConfigFolder = "Config";
+    private const string DataFolder = "Data";
 
     [STAThread]
     private static void Main()
@@ -57,8 +60,8 @@ internal static class SingleFileInstaller
             {
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = Path.Combine(installDir, "CamCapture.exe"),
-                    WorkingDirectory = installDir,
+                    FileName = GetProgramPath(installDir),
+                    WorkingDirectory = Path.Combine(installDir, ProgramFolder),
                     UseShellExecute = true
                 });
             }
@@ -117,8 +120,11 @@ internal static class SingleFileInstaller
 
             Directory.CreateDirectory(installDir);
             CopyDirectory(tempRoot, installDir);
-            Directory.CreateDirectory(Path.Combine(installDir, "captures"));
-            Directory.CreateDirectory(Path.Combine(installDir, "SdkLog"));
+            Directory.CreateDirectory(Path.Combine(installDir, ConfigFolder));
+            Directory.CreateDirectory(Path.Combine(installDir, DataFolder, "processing"));
+            Directory.CreateDirectory(Path.Combine(installDir, DataFolder, "storage"));
+            Directory.CreateDirectory(Path.Combine(installDir, DataFolder, "Logs"));
+            Directory.CreateDirectory(Path.Combine(installDir, DataFolder, "SdkLog"));
 
             CreateShortcuts(installDir, createDesktopShortcut);
             WriteUninstallScript(installDir);
@@ -193,27 +199,34 @@ internal static class SingleFileInstaller
     {
         var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         var startMenu = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+        var programPath = GetProgramPath(installDir);
+        var programDir = Path.GetDirectoryName(programPath);
 
         if (createDesktopShortcut)
         {
             CreateShortcut(
                 Path.Combine(desktop, "CamCapture.lnk"),
-                Path.Combine(installDir, "CamCapture.exe"),
-                installDir,
-                Path.Combine(installDir, "CamCapture.exe"));
+                programPath,
+                programDir,
+                programPath);
         }
 
         CreateShortcut(
             Path.Combine(startMenu, "CamCapture.lnk"),
-            Path.Combine(installDir, "CamCapture.exe"),
-            installDir,
-            Path.Combine(installDir, "CamCapture.exe"));
+            programPath,
+            programDir,
+            programPath);
 
         CreateShortcut(
             Path.Combine(startMenu, "CamCapture 卸载.lnk"),
             Path.Combine(installDir, "uninstall.cmd"),
             installDir,
-            Path.Combine(installDir, "CamCapture.exe"));
+            programPath);
+    }
+
+    private static string GetProgramPath(string installDir)
+    {
+        return Path.Combine(installDir, ProgramFolder, "CamCapture.exe");
     }
 
     private static void CreateShortcut(string shortcutPath, string targetPath, string workingDirectory, string iconPath)

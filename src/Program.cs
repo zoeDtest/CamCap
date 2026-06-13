@@ -3,13 +3,38 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Diagnostics;
+using System.Globalization;
 
 namespace IoCameraCapture;
 
+internal static class AppPaths
+{
+    public static readonly string ProgramDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+    public static readonly string RootDir = string.Equals(Path.GetFileName(ProgramDir), "Program", StringComparison.OrdinalIgnoreCase)
+        ? Directory.GetParent(ProgramDir)?.FullName ?? ProgramDir
+        : ProgramDir;
+    public static readonly string DependencyDir = ResolveDependencyDir();
+    public static readonly string ConfigDir = Path.Combine(RootDir, "Config");
+    public static readonly string DataDir = Path.Combine(RootDir, "Data");
+    public static readonly string ProcessingDir = Path.Combine(DataDir, "processing");
+    public static readonly string StorageDir = Path.Combine(DataDir, "storage");
+    public static readonly string LogDir = Path.Combine(DataDir, "Logs");
+    public static readonly string SdkLogDir = Path.Combine(DataDir, "SdkLog");
+    public static readonly string StartupLogPath = Path.Combine(DataDir, "startup.log");
+    public static readonly string StartupConfigPath = Path.Combine(ConfigDir, "startup-config.json");
+    public static readonly string LegacyStartupConfigPath = Path.Combine(DataDir, "startup-config.json");
+
+    private static string ResolveDependencyDir()
+    {
+        var organizedDir = Path.Combine(RootDir, "Dependencies", "native");
+        return Directory.Exists(organizedDir)
+            ? organizedDir
+            : Path.Combine(ProgramDir, "native");
+    }
+}
+
 internal static class Program
 {
-    private static readonly string StartupLogPath = Path.Combine(AppContext.BaseDirectory, "startup.log");
-
     [STAThread]
     private static void Main()
     {
@@ -39,9 +64,9 @@ internal static class Program
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(StartupLogPath)!);
+            Directory.CreateDirectory(Path.GetDirectoryName(AppPaths.StartupLogPath)!);
             File.AppendAllText(
-                StartupLogPath,
+                AppPaths.StartupLogPath,
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}");
         }
         catch
@@ -53,15 +78,13 @@ internal static class Program
 internal static class AppLogWriter
 {
     private static readonly object SyncRoot = new();
-    private static readonly string LogDir = Path.Combine(AppContext.BaseDirectory, "Logs");
-
-    public static string CurrentLogPath => Path.Combine(LogDir, $"CamCapture_{DateTime.Now:yyyyMMdd}.log");
+    public static string CurrentLogPath => Path.Combine(AppPaths.LogDir, $"CamCapture_{DateTime.Now:yyyyMMdd}.log");
 
     public static void Write(string cameraName, string source, string message)
     {
         try
         {
-            Directory.CreateDirectory(LogDir);
+            Directory.CreateDirectory(AppPaths.LogDir);
             var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] [{cameraName}] {source}: {message}{Environment.NewLine}";
             lock (SyncRoot)
             {
@@ -77,8 +100,8 @@ internal static class AppLogWriter
 internal sealed class MainForm : Form
 {
     private readonly NumericUpDown _cameraCountBox = new() { Minimum = 1, Maximum = 10, Value = 1 };
-    private readonly Button _saveConfigButton = new() { Text = "保存配置" };
-    private readonly Button _loadConfigButton = new() { Text = "载入配置" };
+    private readonly Button _saveConfigButton = new() { Text = "保存初始设置" };
+    private readonly Button _loadConfigButton = new() { Text = "载入初始设置" };
     private readonly Button _aboutButton = new() { Text = "版本信息" };
     private readonly Button _clearLogButton = new() { Text = "清除当前日志" };
     private readonly RadioButton _compactLogButton = new() { Text = "简洁", AutoSize = true, Checked = true };
@@ -120,19 +143,35 @@ internal sealed class MainForm : Form
     };
 
     private readonly List<CameraPanel> _cameraPanels = [];
+    private readonly TcpResultPage _tcpResultPage = new();
+    private readonly TabControl _mainTabs = new();
+    private readonly Label _cameraOverviewStatus = new();
+    private readonly Label _tcpOverviewStatus = new();
+    private readonly Button _cameraOverviewStartButton = new() { Text = "开启相机抓图" };
+    private readonly Button _cameraOverviewStopButton = new() { Text = "停止相机抓图" };
+    private readonly Button _tcpOverviewStartButton = new() { Text = "开启结果监听" };
+    private readonly Button _tcpOverviewStopButton = new() { Text = "停止结果监听" };
+    private readonly CheckBox _autoCaptureOnLaunchBox = new() { Text = "启动程序后自动触发相机抓图", Checked = true, AutoSize = true };
+    private readonly CheckBox _autoTcpOnLaunchBox = new() { Text = "启动程序后自动连接 TCP 通讯", Checked = true, AutoSize = true };
+    private readonly CheckBox _minimizeAfterLaunchBox = new() { Text = "自动启动完成后最小化窗口", Checked = true, AutoSize = true };
 
     public MainForm()
     {
         Program.LogStartup("MainForm constructor started.");
         AppLogWriter.Write("系统", "启动", "MainForm constructor started.");
 
-        Text = "IO 接入 SDK 相机拍照存图";
+        Text = "CamCapture 2.0";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(1280, 820);
+        MinimumSize = new Size(980, 640);
+        Size = new Size(1100, 700);
+        WindowState = FormWindowState.Normal;
+        AutoScaleMode = AutoScaleMode.Dpi;
         BackColor = UiTheme.PageBackColor;
         Font = new Font("Microsoft YaHei UI", 9F);
 
         BuildLayout();
+        _tcpResultPage.LogGenerated += HandleCameraLog;
+        _tcpResultPage.ConnectionStateChanged += (_, state) => UpdateOverviewStatuses();
         CreateCameraPanels();
         ApplyTopBarTheme();
         UpdateCameraPanelVisibility();
@@ -141,8 +180,16 @@ internal sealed class MainForm : Form
         {
             Program.LogStartup("Main form shown.");
             AppLogWriter.Write("系统", "启动", "Main form shown.");
-            Activate();
-            BringToFront();
+            var minimize = LoadStartupConfiguration();
+            if (minimize)
+            {
+                BeginInvoke(new Action(() => WindowState = FormWindowState.Minimized));
+            }
+            else
+            {
+                Activate();
+                BringToFront();
+            }
         };
         FormClosing += (_, _) =>
         {
@@ -151,6 +198,7 @@ internal sealed class MainForm : Form
             {
                 panel.DisposeService();
             }
+            _tcpResultPage.Stop();
         };
 
         Program.LogStartup("MainForm constructor finished.");
@@ -163,10 +211,11 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 3,
+            RowCount = 4,
             BackColor = UiTheme.PageBackColor,
             Padding = new Padding(18, 18, 18, 16)
         };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 360));
@@ -216,8 +265,8 @@ internal sealed class MainForm : Form
         _cameraCountBox.Margin = new Padding(8, 1, 0, 1);
         _cameraCountBox.ValueChanged += (_, _) => UpdateCameraPanelVisibility();
 
-        _saveConfigButton.Size = new Size(100, 30);
-        _loadConfigButton.Size = new Size(100, 30);
+        _saveConfigButton.Size = new Size(132, 30);
+        _loadConfigButton.Size = new Size(132, 30);
         _aboutButton.Size = new Size(100, 30);
         _saveConfigButton.Margin = new Padding(4, 0, 4, 0);
         _loadConfigButton.Margin = new Padding(4, 0, 4, 0);
@@ -260,14 +309,14 @@ internal sealed class MainForm : Form
         _logText.Font = new Font("Consolas", 10F);
         _logText.BackColor = Color.FromArgb(249, 250, 252);
         _logText.ForeColor = Color.FromArgb(44, 62, 80);
-        _clearLogButton.Size = new Size(128, 30);
+        _clearLogButton.Size = new Size(140, 32);
         _clearLogButton.Click += (_, _) =>
         {
             _logText.Clear();
             HandleCameraLog("系统", "日志", "已清除界面日志，文件日志仍保留。");
         };
         _compactLogButton.ForeColor = UiTheme.TextColor;
-        _compactLogButton.Margin = new Padding(0, 7, 10, 0);
+        _compactLogButton.Margin = new Padding(0, 7, 16, 0);
         _compactLogButton.CheckedChanged += (_, _) =>
         {
             UpdateLogModeUi();
@@ -277,7 +326,7 @@ internal sealed class MainForm : Form
             }
         };
         _detailedLogButton.ForeColor = UiTheme.TextColor;
-        _detailedLogButton.Margin = new Padding(0, 7, 14, 0);
+        _detailedLogButton.Margin = new Padding(0, 7, 18, 0);
         _detailedLogButton.CheckedChanged += (_, _) =>
         {
             UpdateLogModeUi();
@@ -290,7 +339,7 @@ internal sealed class MainForm : Form
         _toolTip.SetToolTip(_detailedLogButton, "显示每一步耗时、参数、IO、去抖和写入细节。");
         _toolTip.SetToolTip(_clearLogButton, "只清除当前界面内容，不删除 Logs 目录中的文件日志。");
         _logModeLabel.ForeColor = UiTheme.MutedTextColor;
-        _logModeLabel.Margin = new Padding(12, 8, 12, 0);
+        _logModeLabel.Margin = new Padding(6, 8, 0, 0);
         UpdateLogModeUi();
 
         var logContent = new TableLayoutPanel
@@ -301,7 +350,7 @@ internal sealed class MainForm : Form
             BackColor = UiTheme.PanelBackColor
         };
         logContent.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        logContent.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        logContent.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
         logContent.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var logTitle = new Label
@@ -314,32 +363,30 @@ internal sealed class MainForm : Form
             BackColor = UiTheme.PanelBackColor
         };
 
-        var logToolbar = new Panel
+        var logToolbar = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Height = 44,
-            Padding = new Padding(10, 6, 10, 6),
-            BackColor = UiTheme.PanelBackColor
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(12, 7, 12, 7),
+            BackColor = UiTheme.PanelBackColor,
+            AutoScroll = true
         };
         var logModePanel = new FlowLayoutPanel
         {
-            Dock = DockStyle.Left,
-            Width = 132,
+            AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             Margin = new Padding(0)
         };
         logModePanel.Controls.Add(_compactLogButton);
         logModePanel.Controls.Add(_detailedLogButton);
-        _clearLogButton.Dock = DockStyle.Left;
-        _clearLogButton.Margin = new Padding(8, 0, 8, 0);
-        _logModeLabel.Dock = DockStyle.Left;
-        _logModeLabel.Width = 118;
-        _logModeLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _clearLogButton.Margin = new Padding(14, 0, 14, 0);
+        _logModeLabel.AutoSize = true;
 
-        logToolbar.Controls.Add(_logModeLabel);
-        logToolbar.Controls.Add(_clearLogButton);
         logToolbar.Controls.Add(logModePanel);
+        logToolbar.Controls.Add(_clearLogButton);
+        logToolbar.Controls.Add(_logModeLabel);
 
         var logBody = new Panel
         {
@@ -362,9 +409,182 @@ internal sealed class MainForm : Form
         EnsureLowerSplitDistance(lower);
 
         root.Controls.Add(topBar, 0, 0);
-        root.Controls.Add(_scrollHost, 0, 1);
-        root.Controls.Add(lower, 0, 2);
-        Controls.Add(root);
+        root.Controls.Add(BuildCameraStartupOptionsBar(), 0, 1);
+        root.Controls.Add(_scrollHost, 0, 2);
+        root.Controls.Add(lower, 0, 3);
+        _mainTabs.Dock = DockStyle.Fill;
+        _mainTabs.Font = new Font("Microsoft YaHei UI", 10F);
+        _mainTabs.Padding = new Point(18, 6);
+        var overviewTab = new TabPage("功能总览") { BackColor = UiTheme.PageBackColor };
+        var captureTab = new TabPage("相机抓图") { BackColor = UiTheme.PageBackColor };
+        var tcpTab = new TabPage("TCP 结果监听") { BackColor = UiTheme.PageBackColor };
+        overviewTab.Controls.Add(BuildOverviewPage());
+        captureTab.Controls.Add(root);
+        tcpTab.Controls.Add(_tcpResultPage);
+        _mainTabs.TabPages.Add(overviewTab);
+        _mainTabs.TabPages.Add(captureTab);
+        _mainTabs.TabPages.Add(tcpTab);
+        Controls.Add(_mainTabs);
+    }
+
+    private Control BuildOverviewPage()
+    {
+        _cameraOverviewStartButton.Click += (_, _) => StartAllAutomaticCapture();
+        _cameraOverviewStopButton.Click += (_, _) => StopAllCameras();
+        _tcpOverviewStartButton.Click += (_, _) => _tcpResultPage.StartConnection();
+        _tcpOverviewStopButton.Click += (_, _) => _tcpResultPage.StopConnection();
+
+        var title = new Label
+        {
+            Text = "CamCapture 功能总览",
+            Dock = DockStyle.Top,
+            Height = 74,
+            Font = new Font("Microsoft YaHei UI", 22F, FontStyle.Bold),
+            ForeColor = UiTheme.TextColor,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        var hint = new Label
+        {
+            Text = "初始设置在“相机抓图”页保存；开启相机抓图将自动连接并持续抓图。",
+            Dock = DockStyle.Top,
+            Height = 46,
+            Font = new Font("Microsoft YaHei UI", 12F),
+            ForeColor = UiTheme.MutedTextColor,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        var cameraCard = BuildOverviewCard("相机抓图服务", "开启后自动连接相机并持续抓图，停止后断开连接", _cameraOverviewStatus, _cameraOverviewStartButton, _cameraOverviewStopButton);
+        var tcpCard = BuildOverviewCard("TCP 结果监听", "连接 VisionMarker 并播放 OK / NG 提示音", _tcpOverviewStatus, _tcpOverviewStartButton, _tcpOverviewStopButton);
+        var cards = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 330,
+            ColumnCount = 2,
+            RowCount = 1,
+            Padding = new Padding(0, 12, 0, 0),
+            BackColor = UiTheme.PageBackColor
+        };
+        cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        cards.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        cards.Controls.Add(cameraCard, 0, 0);
+        cards.Controls.Add(tcpCard, 1, 0);
+
+        var page = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(34),
+            BackColor = UiTheme.PageBackColor,
+            AutoScroll = true
+        };
+        page.Resize += (_, _) =>
+        {
+            var stackCards = page.ClientSize.Width < 1320;
+            cards.SuspendLayout();
+            cards.ColumnStyles.Clear();
+            cards.RowStyles.Clear();
+            if (stackCards)
+            {
+                cards.ColumnCount = 1;
+                cards.RowCount = 2;
+                cards.Height = 650;
+                cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+                cards.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                cards.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+                cards.SetCellPosition(cameraCard, new TableLayoutPanelCellPosition(0, 0));
+                cards.SetCellPosition(tcpCard, new TableLayoutPanelCellPosition(0, 1));
+            }
+            else
+            {
+                cards.ColumnCount = 2;
+                cards.RowCount = 1;
+                cards.Height = 330;
+                cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+                cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+                cards.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+                cards.SetCellPosition(cameraCard, new TableLayoutPanelCellPosition(0, 0));
+                cards.SetCellPosition(tcpCard, new TableLayoutPanelCellPosition(1, 0));
+            }
+            cards.ResumeLayout(true);
+        };
+        page.Controls.Add(cards);
+        page.Controls.Add(hint);
+        page.Controls.Add(title);
+        UpdateOverviewStatuses();
+        return page;
+    }
+
+    private Control BuildCameraStartupOptionsBar()
+    {
+        var panel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            WrapContents = true,
+            Padding = new Padding(14, 8, 14, 8),
+            Margin = new Padding(0, 0, 0, 12),
+            BackColor = UiTheme.PanelBackColor
+        };
+        panel.Paint += (_, e) => ControlPaint.DrawBorder(e.Graphics, panel.ClientRectangle, UiTheme.BorderColor, ButtonBorderStyle.Solid);
+        var title = new Label
+        {
+            Text = "启动选项",
+            AutoSize = true,
+            Margin = new Padding(0, 3, 18, 0),
+            Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold),
+            ForeColor = UiTheme.TextColor
+        };
+        foreach (var option in new[] { _autoCaptureOnLaunchBox, _autoTcpOnLaunchBox, _minimizeAfterLaunchBox })
+        {
+            option.Margin = new Padding(0, 3, 22, 0);
+            option.ForeColor = UiTheme.TextColor;
+        }
+        panel.Controls.Add(title);
+        panel.Controls.AddRange([_autoCaptureOnLaunchBox, _autoTcpOnLaunchBox, _minimizeAfterLaunchBox]);
+        return panel;
+    }
+
+    private static Control BuildOverviewCard(string title, string hint, Label status, Button startButton, Button stopButton)
+    {
+        var card = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Margin = new Padding(8),
+            Padding = new Padding(26),
+            BackColor = UiTheme.PanelBackColor
+        };
+        card.Paint += (_, e) => ControlPaint.DrawBorder(e.Graphics, card.ClientRectangle, UiTheme.BorderColor, ButtonBorderStyle.Solid);
+        var titleLabel = new Label { Text = title, Dock = DockStyle.Top, Height = 52, Font = new Font("Microsoft YaHei UI", 18F, FontStyle.Bold), ForeColor = UiTheme.TextColor };
+        var hintLabel = new Label { Text = hint, Dock = DockStyle.Top, Height = 42, Font = new Font("Microsoft YaHei UI", 10F), ForeColor = UiTheme.MutedTextColor };
+        status.Dock = DockStyle.Top;
+        status.Height = 72;
+        status.Font = new Font("Microsoft YaHei UI", 22F, FontStyle.Bold);
+        status.TextAlign = ContentAlignment.MiddleLeft;
+        var actions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 64,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoScroll = true
+        };
+        foreach (var button in new[] { startButton, stopButton })
+        {
+            button.AutoSize = true;
+            button.MinimumSize = new Size(176, 48);
+            button.Padding = new Padding(12, 0, 12, 0);
+            button.Font = new Font("Microsoft YaHei UI", 12F, FontStyle.Bold);
+            button.Margin = new Padding(0, 4, 14, 4);
+            UiTheme.StyleControl(button);
+        }
+        UiTheme.StylePrimaryButton(startButton);
+        UiTheme.StyleNeutralButton(stopButton);
+        actions.Controls.Add(startButton);
+        actions.Controls.Add(stopButton);
+        card.Controls.Add(actions);
+        card.Controls.Add(status);
+        card.Controls.Add(hintLabel);
+        card.Controls.Add(titleLabel);
+        return card;
     }
 
     private void ApplyTopBarTheme()
@@ -391,12 +611,14 @@ internal sealed class MainForm : Form
             panel.LogGenerated += HandleCameraLog;
             panel.CaptureSaved += HandleCameraCaptureSaved;
             panel.CopyTemplateRequested += HandleCopyTemplateRequested;
+            panel.RunningStateChanged += (_, _) => UpdateOverviewStatuses();
 
             _cameraPanels.Add(panel);
             _cameraHost.Controls.Add(panel, 0, i - 1);
         }
 
         UpdateCameraHostLayout();
+        UpdateOverviewStatuses();
     }
 
     private void UpdateCameraPanelVisibility()
@@ -417,6 +639,7 @@ internal sealed class MainForm : Form
         }
 
         UpdateCameraHostLayout();
+        UpdateOverviewStatuses();
     }
 
     private void UpdateCameraHostLayout()
@@ -436,12 +659,13 @@ internal sealed class MainForm : Form
 
     private void SaveConfiguration()
     {
+        Directory.CreateDirectory(AppPaths.ConfigDir);
         using var dialog = new SaveFileDialog
         {
-            Title = "保存相机配置",
+            Title = "保存初始设置",
             Filter = "JSON 配置文件|*.json",
             FileName = "camera-config.json",
-            InitialDirectory = AppContext.BaseDirectory
+            InitialDirectory = AppPaths.ConfigDir
         };
 
         if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -451,13 +675,13 @@ internal sealed class MainForm : Form
 
         try
         {
-            var config = new MultiCameraConfig(
-                CameraCount: (int)_cameraCountBox.Value,
-                Cameras: _cameraPanels.Select(panel => panel.ExportConfig()).ToList());
+            var config = BuildCurrentConfiguration();
 
             var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(dialog.FileName, json, Encoding.UTF8);
+            SaveStartupConfiguration(config);
             HandleCameraLog("系统", "配置", $"已保存配置：{dialog.FileName}");
+            HandleCameraLog("系统", "配置", $"已更新自动启动配置：{AppPaths.StartupConfigPath}");
         }
         catch (Exception ex)
         {
@@ -467,11 +691,12 @@ internal sealed class MainForm : Form
 
     private void LoadConfiguration()
     {
+        Directory.CreateDirectory(AppPaths.ConfigDir);
         using var dialog = new OpenFileDialog
         {
-            Title = "载入相机配置",
+            Title = "载入初始设置",
             Filter = "JSON 配置文件|*.json",
-            InitialDirectory = AppContext.BaseDirectory
+            InitialDirectory = AppPaths.ConfigDir
         };
 
         if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -485,19 +710,8 @@ internal sealed class MainForm : Form
             var config = JsonSerializer.Deserialize<MultiCameraConfig>(json)
                 ?? throw new InvalidOperationException("配置文件内容为空或格式无效。");
 
-            var count = Math.Clamp(config.CameraCount, 1, 10);
-            _cameraCountBox.Value = count;
-
-            for (var i = 0; i < _cameraPanels.Count; i++)
-            {
-                var cameraConfig = i < config.Cameras.Count ? config.Cameras[i] : null;
-                if (cameraConfig is not null)
-                {
-                    _cameraPanels[i].ApplyConfig(cameraConfig);
-                }
-            }
-
-            UpdateCameraPanelVisibility();
+            ApplyConfiguration(config);
+            SaveStartupConfiguration(config);
             HandleCameraLog("系统", "配置", $"已载入配置：{dialog.FileName}");
         }
         catch (Exception ex)
@@ -506,20 +720,135 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void SaveStartupConfiguration(MultiCameraConfig config)
+    {
+        Directory.CreateDirectory(AppPaths.ConfigDir);
+        File.WriteAllText(AppPaths.StartupConfigPath, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+    }
+
+    private bool LoadStartupConfiguration()
+    {
+        var configPath = File.Exists(AppPaths.StartupConfigPath)
+            ? AppPaths.StartupConfigPath
+            : AppPaths.LegacyStartupConfigPath;
+        if (!File.Exists(configPath))
+        {
+            HandleCameraLog("系统", "配置", "尚未保存自动启动配置，请先在设置页完成配置并点击保存配置。");
+            return false;
+        }
+
+        try
+        {
+            var config = JsonSerializer.Deserialize<MultiCameraConfig>(File.ReadAllText(configPath, Encoding.UTF8))
+                ?? throw new InvalidOperationException("自动启动配置内容为空。");
+            ApplyConfiguration(config);
+            if (!string.Equals(configPath, AppPaths.StartupConfigPath, StringComparison.OrdinalIgnoreCase))
+            {
+                SaveStartupConfiguration(config);
+                HandleCameraLog("系统", "配置", $"旧配置已迁移到：{AppPaths.StartupConfigPath}");
+            }
+            var startup = config.Startup ?? StartupOptions.Default;
+            if (startup.AutoCaptureOnLaunch)
+            {
+                StartAllAutomaticCapture();
+            }
+            if (startup.AutoTcpOnLaunch)
+            {
+                _tcpResultPage.StartConnection();
+            }
+            HandleCameraLog("系统", "配置", "已载入相机抓图页初始设置并按启动选项执行。");
+            return startup.MinimizeAfterLaunch;
+        }
+        catch (Exception ex)
+        {
+            HandleCameraLog("系统", "错误", $"自动启动失败：{ex.Message}");
+            return false;
+        }
+    }
+
+    private void ApplyConfiguration(MultiCameraConfig config)
+    {
+        _cameraCountBox.Value = Math.Clamp(config.CameraCount, 1, 10);
+        for (var i = 0; i < _cameraPanels.Count; i++)
+        {
+            if (i < config.Cameras.Count)
+            {
+                _cameraPanels[i].ApplyConfig(config.Cameras[i]);
+            }
+        }
+        UpdateCameraPanelVisibility();
+        _tcpResultPage.ApplyConfig((config.TcpMonitor ?? TcpMonitorConfig.Default) with { StartOnLaunch = false });
+        ApplyStartupOptions(config);
+    }
+
+    private MultiCameraConfig BuildCurrentConfiguration()
+    {
+        return new MultiCameraConfig(
+            CameraCount: (int)_cameraCountBox.Value,
+            Cameras: _cameraPanels.Select(panel => panel.ExportConfig()).ToList(),
+            TcpMonitor: _tcpResultPage.ExportConfig(),
+            Startup: new StartupOptions(_autoCaptureOnLaunchBox.Checked, _autoTcpOnLaunchBox.Checked, _minimizeAfterLaunchBox.Checked));
+    }
+
+    private void ApplyStartupOptions(MultiCameraConfig config)
+    {
+        var startup = config.Startup ?? StartupOptions.Default;
+        _autoCaptureOnLaunchBox.Checked = startup.AutoCaptureOnLaunch;
+        _autoTcpOnLaunchBox.Checked = startup.AutoTcpOnLaunch;
+        _minimizeAfterLaunchBox.Checked = startup.MinimizeAfterLaunch;
+    }
+
+    private void StartAllAutomaticCapture()
+    {
+        foreach (var panel in ConfiguredCameraPanels())
+        {
+            panel.StartAutomaticCaptureFromOverview();
+        }
+        UpdateOverviewStatuses();
+    }
+
+    private void StopAllCameras()
+    {
+        foreach (var panel in ConfiguredCameraPanels())
+        {
+            panel.StopFromOverview();
+        }
+        UpdateOverviewStatuses();
+    }
+
+    private void UpdateOverviewStatuses()
+    {
+        var configured = ConfiguredCameraPanels().ToList();
+        var active = configured.Count(panel => panel.IsActive);
+        _cameraOverviewStatus.Text = active == 0 ? "未启动" : active == configured.Count ? $"运行中  {active}/{configured.Count}" : $"部分运行  {active}/{configured.Count}";
+        _cameraOverviewStatus.ForeColor = active == configured.Count && active > 0 ? UiTheme.SuccessColor : active > 0 ? Color.FromArgb(208, 132, 0) : UiTheme.DangerColor;
+        _tcpOverviewStatus.Text = _tcpResultPage.IsRunning ? "运行中" : "未启动";
+        _tcpOverviewStatus.ForeColor = _tcpResultPage.IsRunning ? UiTheme.SuccessColor : UiTheme.DangerColor;
+    }
+
+    private IEnumerable<CameraPanel> ConfiguredCameraPanels()
+    {
+        return _cameraPanels.Take(Math.Min((int)_cameraCountBox.Value, _cameraPanels.Count));
+    }
+
     private void ShowAboutDialog()
     {
         var version = typeof(MainForm).Assembly.GetName().Version?.ToString() ?? "1.0.0";
         var message =
-            "CamCapture 高速版" + Environment.NewLine + Environment.NewLine +
+            "CamCapture 2.0" + Environment.NewLine + Environment.NewLine +
             $"版本：{version}" + Environment.NewLine +
             $"产品：CamCapture" + Environment.NewLine +
             $"公司：Imaging" + Environment.NewLine +
-            $"运行目录：{AppContext.BaseDirectory}" + Environment.NewLine + Environment.NewLine +
+            $"程序目录：{AppPaths.ProgramDir}" + Environment.NewLine +
+            $"配置目录：{AppPaths.ConfigDir}" + Environment.NewLine +
+            $"数据目录：{AppPaths.DataDir}" + Environment.NewLine + Environment.NewLine +
             "功能包括：" + Environment.NewLine +
             "- 多相机配置" + Environment.NewLine +
             "- 独立存图目录与日期分组" + Environment.NewLine +
             "- 配置保存 / 载入" + Environment.NewLine +
             "- 模板复制" + Environment.NewLine +
+            "- VisionMarker TCP 结果监听" + Environment.NewLine +
+            "- OK / NG 音频提示" + Environment.NewLine +
             "- 分段抓图日志与去抖建议";
 
         MessageBox.Show(this, message, "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -541,6 +870,7 @@ internal sealed class MainForm : Form
         }
 
         _logText.AppendText($"[{DateTime.Now:HH:mm:ss}] [{cameraName}] {source}: {message}{Environment.NewLine}");
+        UiLogLimiter.Trim(_logText);
     }
 
     private void UpdateLogModeUi()
@@ -683,9 +1013,13 @@ internal sealed class CameraPanel : Panel
     private readonly ComboBox _pictureQualityBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly NumericUpDown _pictureSizeBox = new() { Minimum = 0, Maximum = 65535, Value = 255 };
     private readonly TextBox _outputRootText = new() { Text = DefaultOutputRootDir };
-    private readonly CheckBox _limitFolderImagesBox = new() { Text = "启用自动清理", AutoSize = true };
+    private readonly CheckBox _limitFolderImagesBox = new() { Text = "启用", AutoSize = true, Checked = true };
     private readonly NumericUpDown _maxFolderImagesBox = new() { Minimum = 1, Maximum = 1000000, Value = 5, Enabled = false };
     private readonly Button _browseOutputButton = new() { Text = "浏览..." };
+    private readonly CheckBox _limitImageAgeBox = new() { Text = "启用", AutoSize = true };
+    private readonly TextBox _retentionFolderText = new() { Text = DefaultStorageFolderDir };
+    private readonly Button _browseRetentionFolderButton = new() { Text = "浏览..." };
+    private readonly NumericUpDown _retentionDurationBox = new() { Minimum = 1, Maximum = 36500, Value = 90, Enabled = false };
     private readonly CheckBox _previewStreamCaptureBox = new() { Text = "预览流抓帧", AutoSize = true };
 
     private readonly ComboBox _triggerModeBox = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -712,11 +1046,9 @@ internal sealed class CameraPanel : Panel
         BackColor = UiTheme.PageBackColor
     };
 
-    private readonly Button _startButton = new() { Text = "相机连接" };
-    private readonly Button _stopButton = new() { Text = "断开连接", Enabled = false };
-    private readonly Button _debugButton = new() { Text = "调试", Enabled = false };
-    private readonly Button _testStartButton = new() { Text = "启动抓图", Enabled = false };
-    private readonly Button _testStopButton = new() { Text = "停止抓图", Enabled = false };
+    private readonly Button _startButton = new() { Text = "开启相机抓图" };
+    private readonly Button _stopButton = new() { Text = "停止相机抓图", Enabled = false };
+    private readonly Button _debugButton = new() { Text = "调试抓图", Enabled = false };
     private readonly Label _statusLabel = new() { Text = "未连接", AutoSize = true };
 
     private CameraIoCaptureService? _service;
@@ -726,8 +1058,10 @@ internal sealed class CameraPanel : Panel
     public event Action<string, string, string>? LogGenerated;
     public event Action<string, string, bool>? CaptureSaved;
     public event Action<int, CameraPanelConfig>? CopyTemplateRequested;
+    public event Action<bool, string>? RunningStateChanged;
 
-    private static string DefaultOutputRootDir => Path.Combine(AppContext.BaseDirectory, "captures");
+    private static string DefaultOutputRootDir => AppPaths.ProcessingDir;
+    private static string DefaultStorageFolderDir => AppPaths.StorageDir;
 
     public CameraPanel(int cameraIndex)
     {
@@ -736,6 +1070,7 @@ internal sealed class CameraPanel : Panel
         _cameraFolderText = new TextBox { Text = $"Camera{cameraIndex:D2}" };
         _ioModelText.Text = $"IO-{cameraIndex}";
         _limitFolderImagesBox.CheckedChanged += (_, _) => UpdateImageLimitUi();
+        _limitImageAgeBox.CheckedChanged += (_, _) => UpdateImageAgeLimitUi();
 
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -747,6 +1082,7 @@ internal sealed class CameraPanel : Panel
         ApplyIoProfile();
         UpdateTriggerModeUi();
         UpdateImageLimitUi();
+        UpdateImageAgeLimitUi();
         SetExpanded(cameraIndex == 1);
     }
 
@@ -757,6 +1093,15 @@ internal sealed class CameraPanel : Panel
     }
 
     public bool IsActive => _service is not null;
+
+    public void StopFromOverview() => StopService();
+
+    public void StartAutomaticCaptureFromOverview()
+    {
+        _triggerModeBox.SelectedIndex = 0;
+        StartService();
+        StartTriggerTest();
+    }
 
     public void StopRunningWork()
     {
@@ -802,20 +1147,20 @@ internal sealed class CameraPanel : Panel
         _headerStatusLabel.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
         _headerStatusLabel.ForeColor = UiTheme.DangerColor;
 
-        _copyTemplateButton.Size = new Size(96, 28);
+        _copyTemplateButton.Size = new Size(112, 30);
         _copyTemplateButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         _copyTemplateButton.Click += (_, _) => CopyTemplateRequested?.Invoke(_cameraIndex, ExportConfig());
 
-        _toggleButton.Size = new Size(90, 28);
+        _toggleButton.Size = new Size(96, 30);
         _toggleButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _toggleButton.Location = new Point(header.Width - 102, 6);
+        _toggleButton.Location = new Point(header.Width - 108, 6);
         _toggleButton.Click += (_, _) => SetExpanded(!_bodyPanel.Visible);
         header.Resize += (_, _) =>
         {
-            _toggleButton.Location = new Point(header.Width - 102, 6);
-            _copyTemplateButton.Location = new Point(header.Width - 206, 6);
+            _toggleButton.Location = new Point(header.Width - 108, 6);
+            _copyTemplateButton.Location = new Point(header.Width - 228, 6);
         };
-        _copyTemplateButton.Location = new Point(header.Width - 206, 6);
+        _copyTemplateButton.Location = new Point(header.Width - 228, 6);
 
         header.Controls.Add(_titleLabel);
         header.Controls.Add(_headerStatusLabel);
@@ -852,10 +1197,8 @@ internal sealed class CameraPanel : Panel
         UiTheme.AddLabeled(group, "用户名", _userText, 1, 0);
         UiTheme.AddLabeled(group, "密码", _passwordText, 0, 1);
         UiTheme.AddLabeled(group, "相机文件夹", _cameraFolderText, 1, 1);
-        UiTheme.AddLabeled(group, "存图根目录", BuildOutputRootControl(), 0, 2, 2);
-        UiTheme.AddLabeled(group, "图片数量限制", _limitFolderImagesBox, 0, 3);
-        UiTheme.AddLabeled(group, "最大图片张数", _maxFolderImagesBox, 1, 3);
-        UiTheme.AddLabeled(group, "自动触发间隔（毫秒）", _autoTriggerIntervalBox, 0, 4);
+        UiTheme.AddLabeled(group, "存储文件夹", BuildRetentionFolderControl(), 0, 2, 2);
+        UiTheme.AddLabeled(group, "图片自动清理", BuildStorageCleanupPolicyControl(), 0, 3, 2);
         return group;
     }
 
@@ -888,7 +1231,7 @@ internal sealed class CameraPanel : Panel
         };
         var hint = new Label
         {
-            Text = "通讯、图片规格、触发方式和 IO 参数",
+            Text = "处理文件夹、通讯、图片规格、触发方式和 IO 参数",
             AutoSize = true,
             Location = new Point(100, 13),
             ForeColor = UiTheme.MutedTextColor
@@ -932,7 +1275,7 @@ internal sealed class CameraPanel : Panel
         UiTheme.AddLabeled(group, "端口", _portBox, 0, 0);
         UiTheme.AddLabeled(group, "通讯号码", _commNoText, 1, 0);
         UiTheme.AddLabeled(group, "抓图通道", _channelBox, 0, 1);
-        UiTheme.AddLabeled(group, "SDK 目录", UiTheme.CreateReadOnlyText(Path.Combine(AppContext.BaseDirectory, "native")), 0, 2, 2);
+        UiTheme.AddLabeled(group, "SDK 目录", UiTheme.CreateReadOnlyText(AppPaths.DependencyDir), 0, 2, 2);
         return group;
     }
 
@@ -942,7 +1285,8 @@ internal sealed class CameraPanel : Panel
         UiTheme.AddLabeled(group, "图片质量", _pictureQualityBox, 0, 0);
         UiTheme.AddLabeled(group, "图片规格", _pictureSizeBox, 1, 0);
         UiTheme.AddLabeled(group, "预览流抓帧", _previewStreamCaptureBox, 0, 1);
-        UiTheme.AddLabeled(group, "清理范围", UiTheme.CreateReadOnlyText("当前相机文件夹（包含日期和小时子目录）"), 0, 2, 2);
+        UiTheme.AddLabeled(group, "处理文件夹", BuildOutputRootControl(), 0, 2, 2);
+        UiTheme.AddLabeled(group, "清理范围", UiTheme.CreateReadOnlyText("处理文件夹按张数保留最新图片；存储文件夹按保存天数清理"), 0, 3, 2);
         return group;
     }
 
@@ -967,11 +1311,70 @@ internal sealed class CameraPanel : Panel
         return outputPanel;
     }
 
+    private Control BuildRetentionFolderControl()
+    {
+        var folderPanel = new TableLayoutPanel
+        {
+            ColumnCount = 2,
+            RowCount = 1,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(4, 4, 12, 8)
+        };
+        folderPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        folderPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _retentionFolderText.Margin = new Padding(0);
+        _retentionFolderText.Dock = DockStyle.Fill;
+        _browseRetentionFolderButton.Margin = new Padding(8, 0, 0, 0);
+        _browseRetentionFolderButton.Width = 84;
+        _browseRetentionFolderButton.Click += (_, _) => BrowseRetentionFolder();
+        folderPanel.Controls.Add(_retentionFolderText, 0, 0);
+        folderPanel.Controls.Add(_browseRetentionFolderButton, 1, 0);
+        return folderPanel;
+    }
+
+    private Control BuildStorageCleanupPolicyControl()
+    {
+        var policyPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            WrapContents = false,
+            FlowDirection = FlowDirection.LeftToRight,
+            Margin = new Padding(4, 1, 12, 3),
+            Padding = new Padding(0)
+        };
+        _limitFolderImagesBox.Text = "处理文件夹保留";
+        _limitFolderImagesBox.Margin = new Padding(0, 4, 6, 0);
+        _maxFolderImagesBox.Width = 130;
+        _maxFolderImagesBox.Margin = new Padding(0, 1, 4, 0);
+        _limitImageAgeBox.Text = "存储文件夹保存";
+        _limitImageAgeBox.Margin = new Padding(28, 4, 6, 0);
+        _retentionDurationBox.Width = 130;
+        _retentionDurationBox.Margin = new Padding(0, 1, 4, 0);
+
+        policyPanel.Controls.Add(_limitFolderImagesBox);
+        policyPanel.Controls.Add(_maxFolderImagesBox);
+        policyPanel.Controls.Add(CreatePolicyUnitLabel("张"));
+        policyPanel.Controls.Add(_limitImageAgeBox);
+        policyPanel.Controls.Add(_retentionDurationBox);
+        policyPanel.Controls.Add(CreatePolicyUnitLabel("天"));
+        return policyPanel;
+    }
+
+    private static Label CreatePolicyUnitLabel(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        Margin = new Padding(0, 5, 0, 0),
+        ForeColor = UiTheme.TextColor
+    };
+
     private Control BuildTriggerGroup()
     {
         var group = UiTheme.CreateGroup("触发参数", 2);
         UiTheme.AddLabeled(group, "触发模式", _triggerModeBox, 0, 0);
-        UiTheme.AddLabeled(group, "自动触发说明", UiTheme.CreateReadOnlyText("自动模式按常用设置中的时间间隔持续触发，直到点击停止抓图。"), 0, 1, 2);
+        UiTheme.AddLabeled(group, "自动抓图间隔(ms)", _autoTriggerIntervalBox, 1, 0);
+        UiTheme.AddLabeled(group, "自动触发说明", UiTheme.CreateReadOnlyText("自动模式按高级设置中的自动抓图间隔持续触发，直到点击停止抓图。"), 0, 1, 2);
         UiTheme.AddLabeled(group, "手动触发", _manualTriggerTypeBox, 0, 2);
         UiTheme.AddLabeled(group, "触发次数", _manualTriggerCountBox, 1, 2);
         UiTheme.AddLabeled(group, "触发间隔（毫秒）", _manualTriggerIntervalBox, 0, 3);
@@ -1037,7 +1440,7 @@ internal sealed class CameraPanel : Panel
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
             BackColor = UiTheme.PanelBackColor,
-            Padding = new Padding(12, 8, 12, 8),
+            Padding = new Padding(14, 9, 14, 9),
             Margin = new Padding(0, 0, 0, 10),
             WrapContents = true
         };
@@ -1046,7 +1449,7 @@ internal sealed class CameraPanel : Panel
         {
             Text = "相机状态",
             AutoSize = true,
-            Margin = new Padding(0, 8, 14, 0),
+            Margin = new Padding(0, 8, 18, 0),
             ForeColor = UiTheme.TextColor,
             Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold)
         };
@@ -1054,19 +1457,25 @@ internal sealed class CameraPanel : Panel
         {
             Text = "当前状态",
             AutoSize = true,
-            Margin = new Padding(18, 8, 4, 0),
+            Margin = new Padding(24, 8, 8, 0),
             ForeColor = UiTheme.MutedTextColor
         };
         _statusLabel.Margin = new Padding(0, 8, 0, 0);
         _statusLabel.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
 
-        _startButton.Click += (_, _) => StartService();
+        _startButton.Size = new Size(132, 34);
+        _stopButton.Size = new Size(132, 34);
+        _debugButton.Size = new Size(108, 34);
+        foreach (var button in new[] { _startButton, _stopButton, _debugButton })
+        {
+            button.Margin = new Padding(0, 2, 8, 2);
+        }
+
+        _startButton.Click += (_, _) => StartAutomaticCaptureFromOverview();
         _stopButton.Click += (_, _) => StopService();
         _debugButton.Click += (_, _) => DebugCapture();
-        _testStartButton.Click += (_, _) => StartTriggerTest();
-        _testStopButton.Click += (_, _) => StopTriggerTest();
 
-        panel.Controls.AddRange([sectionTitle, _startButton, _stopButton, _debugButton, _testStartButton, _testStopButton, statusTitle, _statusLabel]);
+        panel.Controls.AddRange([sectionTitle, _startButton, _stopButton, _debugButton, statusTitle, _statusLabel]);
         return panel;
     }
 
@@ -1101,9 +1510,8 @@ internal sealed class CameraPanel : Panel
         UiTheme.StylePrimaryButton(_startButton);
         UiTheme.StyleNeutralButton(_stopButton);
         UiTheme.StyleNeutralButton(_debugButton);
-        UiTheme.StylePrimaryButton(_testStartButton);
-        UiTheme.StyleNeutralButton(_testStopButton);
         UiTheme.StyleNeutralButton(_browseOutputButton);
+        UiTheme.StyleNeutralButton(_browseRetentionFolderButton);
         UiTheme.StyleNeutralButton(_toggleButton);
         UiTheme.StyleNeutralButton(_toggleIoButton);
         UiTheme.StyleNeutralButton(_toggleAdvancedButton);
@@ -1118,13 +1526,27 @@ internal sealed class CameraPanel : Panel
     {
         using var dialog = new FolderBrowserDialog
         {
-            Description = "选择相机存图根目录",
+            Description = "选择相机抓图处理文件夹",
             SelectedPath = _outputRootText.Text
         };
 
         if (dialog.ShowDialog() == DialogResult.OK)
         {
             _outputRootText.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void BrowseRetentionFolder()
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "选择需要按保存天数自动清理的存储文件夹",
+            SelectedPath = ResolvePathFromAppBase(_retentionFolderText.Text, DefaultStorageFolderDir)
+        };
+
+        if (dialog.ShowDialog() == DialogResult.OK)
+        {
+            _retentionFolderText.Text = dialog.SelectedPath;
         }
     }
 
@@ -1152,6 +1574,12 @@ internal sealed class CameraPanel : Panel
     private void UpdateImageLimitUi()
     {
         _maxFolderImagesBox.Enabled = _limitFolderImagesBox.Checked;
+    }
+
+    private void UpdateImageAgeLimitUi()
+    {
+        var enabled = _limitImageAgeBox.Checked;
+        _retentionDurationBox.Enabled = enabled;
     }
 
     private void ApplyIoProfile()
@@ -1315,20 +1743,17 @@ internal sealed class CameraPanel : Panel
         _startButton.Enabled = !running;
         _stopButton.Enabled = running;
         _debugButton.Enabled = running;
-        _testStartButton.Enabled = running && _testCts is null;
-        _testStopButton.Enabled = running && _testCts is not null;
         _statusLabel.Text = running ? "已连接 / 已布防" : (_hasStartedOnce ? "已暂停" : "未连接");
         _statusLabel.ForeColor = running ? UiTheme.SuccessColor : (_hasStartedOnce ? Color.FromArgb(208, 132, 0) : UiTheme.DangerColor);
         if (running)
         {
             SetHeaderState("已启动", UiTheme.SuccessColor);
         }
+        RunningStateChanged?.Invoke(running, _statusLabel.Text);
     }
 
     private void SetTestingState(bool testing)
     {
-        _testStartButton.Enabled = _service is not null && !testing;
-        _testStopButton.Enabled = _service is not null && testing;
         _triggerModeBox.Enabled = !testing;
         if (_service is not null)
         {
@@ -1365,6 +1790,9 @@ internal sealed class CameraPanel : Panel
             OutputRootDir: _outputRootText.Text.Trim(),
             LimitImageCount: _limitFolderImagesBox.Checked,
             MaxImageCount: (int)_maxFolderImagesBox.Value,
+            LimitImageAge: _limitImageAgeBox.Checked,
+            RetentionFolder: _retentionFolderText.Text.Trim(),
+            RetentionDuration: (int)_retentionDurationBox.Value,
             CameraFolder: _cameraFolderText.Text.Trim(),
             TriggerMode: _triggerModeBox.SelectedIndex,
             AutoTriggerIntervalMs: (int)_autoTriggerIntervalBox.Value,
@@ -1399,6 +1827,14 @@ internal sealed class CameraPanel : Panel
             config.MaxImageCount <= 0 ? 5 : config.MaxImageCount,
             (int)_maxFolderImagesBox.Minimum,
             (int)_maxFolderImagesBox.Maximum);
+        _limitImageAgeBox.Checked = config.LimitImageAge;
+        _retentionFolderText.Text = string.IsNullOrWhiteSpace(config.RetentionFolder)
+            ? DefaultStorageFolderDir
+            : ResolvePathFromAppBase(config.RetentionFolder, DefaultStorageFolderDir);
+        _retentionDurationBox.Value = Math.Clamp(
+            config.RetentionDuration <= 0 ? 90 : config.RetentionDuration,
+            (int)_retentionDurationBox.Minimum,
+            (int)_retentionDurationBox.Maximum);
         _cameraFolderText.Text = config.CameraFolder;
         _triggerModeBox.SelectedIndex = Math.Clamp(config.TriggerMode, 0, _triggerModeBox.Items.Count - 1);
         _autoTriggerIntervalBox.Value = Math.Clamp(config.AutoTriggerIntervalMs, (int)_autoTriggerIntervalBox.Minimum, (int)_autoTriggerIntervalBox.Maximum);
@@ -1421,6 +1857,7 @@ internal sealed class CameraPanel : Panel
         SetExpanded(config.PanelExpanded);
         UpdateTriggerModeUi();
         UpdateImageLimitUi();
+        UpdateImageAgeLimitUi();
     }
 
     private CaptureOptions ReadOptions()
@@ -1445,8 +1882,11 @@ internal sealed class CameraPanel : Panel
             OutputRootDir: ResolvePathFromAppBase(_outputRootText.Text.Trim()),
             LimitImageCount: _limitFolderImagesBox.Checked,
             MaxImageCount: (int)_maxFolderImagesBox.Value,
-            LogDir: Path.Combine(AppContext.BaseDirectory, "SdkLog"),
-            SdkDir: Path.Combine(AppContext.BaseDirectory, "native"));
+            LimitImageAge: _limitImageAgeBox.Checked,
+            RetentionFolder: ResolvePathFromAppBase(_retentionFolderText.Text.Trim(), DefaultStorageFolderDir),
+            RetentionDuration: (int)_retentionDurationBox.Value,
+            LogDir: AppPaths.SdkLogDir,
+            SdkDir: AppPaths.DependencyDir);
     }
 
     private static string NormalizeConfiguredOutputRoot(string value)
@@ -1459,16 +1899,16 @@ internal sealed class CameraPanel : Panel
         return ResolvePathFromAppBase(value);
     }
 
-    private static string ResolvePathFromAppBase(string value)
+    private static string ResolvePathFromAppBase(string value, string? fallback = null)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return DefaultOutputRootDir;
+            return fallback ?? DefaultOutputRootDir;
         }
 
         return Path.GetFullPath(Path.IsPathFullyQualified(value)
             ? value
-            : Path.Combine(AppContext.BaseDirectory, value));
+            : Path.Combine(AppPaths.RootDir, value));
     }
 
     private static bool IsBundledDevelopmentOutputRoot(string value)
@@ -1511,8 +1951,8 @@ internal static class UiTheme
             BackColor = PanelBackColor,
             ForeColor = TextColor,
             Font = new Font("Microsoft YaHei UI", 10F, FontStyle.Bold),
-            Padding = new Padding(12, 10, 12, 12),
-            Margin = new Padding(0, 0, 0, 10)
+            Padding = new Padding(10, 6, 10, 8),
+            Margin = new Padding(0, 0, 0, 6)
         };
 
         var table = new TableLayoutPanel
@@ -1520,8 +1960,9 @@ internal static class UiTheme
             Dock = DockStyle.Fill,
             AutoSize = true,
             ColumnCount = valueColumns * 2,
-            RowCount = 3,
-            Padding = new Padding(12, 10, 12, 12),
+            RowCount = 0,
+            GrowStyle = TableLayoutPanelGrowStyle.AddRows,
+            Padding = new Padding(10, 5, 10, 7),
             BackColor = PanelBackColor
         };
 
@@ -1531,9 +1972,6 @@ internal static class UiTheme
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / valueColumns));
         }
 
-        table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         group.Controls.Add(table);
         return group;
     }
@@ -1581,7 +2019,7 @@ internal static class UiTheme
             Dock = DockStyle.Fill,
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleLeft,
-            Margin = new Padding(0, 9, 6, 0),
+            Margin = new Padding(0, 4, 6, 0),
             ForeColor = TextColor,
             Font = new Font("Microsoft YaHei UI", 9F),
             AutoEllipsis = true
@@ -1589,11 +2027,16 @@ internal static class UiTheme
 
         var labelColumn = pairColumn * 2;
         var valueColumn = labelColumn + 1;
+        while (table.RowCount <= row)
+        {
+            table.RowCount++;
+            table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        }
         table.Controls.Add(label, labelColumn, row);
         table.Controls.Add(control, valueColumn, row);
         table.SetColumnSpan(control, valueSpan * 2 - 1);
         control.Dock = DockStyle.Fill;
-        control.Margin = new Padding(4, 4, 12, 8);
+        control.Margin = new Padding(4, 1, 12, 3);
     }
 
     public static IEnumerable<Control> EnumerateControls(Control parent)
@@ -1632,7 +2075,7 @@ internal static class UiTheme
             case CheckBox checkBox:
                 checkBox.BackColor = PanelBackColor;
                 checkBox.ForeColor = TextColor;
-                checkBox.Margin = new Padding(4, 8, 12, 8);
+                checkBox.Margin = new Padding(4, 3, 12, 3);
                 break;
             case RadioButton radioButton:
                 radioButton.BackColor = PanelBackColor;
@@ -1824,6 +2267,55 @@ internal static class ImageRetentionManager
         }
     }
 
+    public static void EnforceAge(string rootDirectory, TimeSpan retention, Action<string, string> log)
+    {
+        if (retention <= TimeSpan.Zero || !Directory.Exists(rootDirectory))
+        {
+            return;
+        }
+
+        var normalizedRoot = Path.GetFullPath(rootDirectory);
+        var directoryLock = DirectoryLocks.GetOrAdd(normalizedRoot, _ => new object());
+        var cutoffUtc = DateTime.UtcNow.Subtract(retention);
+
+        lock (directoryLock)
+        {
+            try
+            {
+                var expiredImages = Directory.EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories)
+                    .Where(IsImageFile)
+                    .Select(path => new FileInfo(path))
+                    .Where(file => file.LastWriteTimeUtc < cutoffUtc)
+                    .OrderBy(file => file.LastWriteTimeUtc)
+                    .ThenBy(file => file.FullName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                var deletedCount = 0;
+                foreach (var image in expiredImages)
+                {
+                    try
+                    {
+                        image.Delete();
+                        deletedCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        log("存储清理", $"删除过期图片失败：{image.FullName}，错误：{ex.Message}");
+                    }
+                }
+
+                if (deletedCount > 0)
+                {
+                    log("存储清理", $"已删除超过存储天数的图片 {deletedCount} 张，目录：{normalizedRoot}");
+                }
+            }
+            catch (Exception ex)
+            {
+                log("存储清理", $"检查存储文件夹失败：{normalizedRoot}，错误：{ex.Message}");
+            }
+        }
+    }
+
     private static bool IsImageFile(string path)
     {
         var extension = Path.GetExtension(path);
@@ -1839,7 +2331,7 @@ internal sealed class CameraIoCaptureService : IDisposable
     private readonly CaptureOptions _options;
     private readonly HikvisionSdk.MsgCallBackV31 _alarmCallback;
     private readonly CaptureWriteQueue _writeQueue;
-    private readonly string _cameraCaptureRoot;
+    private readonly System.Threading.Timer _retentionTimer;
     private readonly Queue<double> _recentAcceptedIntervalsMs = new();
     private readonly Queue<double> _recentRejectedIntervalsMs = new();
     private readonly object _directoryLock = new();
@@ -1858,18 +2350,25 @@ internal sealed class CameraIoCaptureService : IDisposable
     {
         _options = options;
         _alarmCallback = OnAlarm;
-        var cameraFolderName = SanitizeFileName(string.IsNullOrWhiteSpace(_options.CameraFolder) ? _options.CameraName : _options.CameraFolder);
-        _cameraCaptureRoot = Path.Combine(_options.OutputRootDir, cameraFolderName);
         _writeQueue = new CaptureWriteQueue(
             Log,
             (path, showPreview) => Captured?.Invoke(path, showPreview),
-            EnforceImageCountLimit);
+            EnforceRetentionPolicies);
+        _retentionTimer = new System.Threading.Timer(
+            _ => EnforceRetentionPolicies(),
+            null,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan);
     }
 
     public void Start()
     {
         Directory.CreateDirectory(_options.OutputRootDir);
         Directory.CreateDirectory(_options.LogDir);
+        if (_options.LimitImageAge)
+        {
+            Directory.CreateDirectory(_options.RetentionFolder);
+        }
 
         ConfigureNativeSearchPath();
         ConfigureSdkPath();
@@ -1883,7 +2382,8 @@ internal sealed class CameraIoCaptureService : IDisposable
         SetGeneralConfig();
         Login();
         SetupAlarm();
-        Log("参数", $"IP={_options.Ip}:{_options.Port}，通道={_options.Channel}，输入号={_options.AlarmInput}，图片规格={_options.PictureSize}，图片质量={_options.PictureQuality}，去抖={_options.DebounceMs}ms，预览流抓帧={(_options.UsePreviewStreamCapture ? "开启" : "关闭")}，图片数量限制={(_options.LimitImageCount ? $"开启（{_options.MaxImageCount} 张）" : "关闭")}，输出={_options.OutputRootDir}");
+        _retentionTimer.Change(TimeSpan.Zero, TimeSpan.FromMinutes(1));
+        Log("参数", $"IP={_options.Ip}:{_options.Port}，通道={_options.Channel}，输入号={_options.AlarmInput}，图片规格={_options.PictureSize}，图片质量={_options.PictureQuality}，去抖={_options.DebounceMs}ms，预览流抓帧={(_options.UsePreviewStreamCapture ? "开启" : "关闭")}，处理文件夹张数上限={(_options.LimitImageCount ? $"开启（{_options.MaxImageCount} 张）" : "关闭")}，存储时长清理={(_options.LimitImageAge ? $"开启（{_options.RetentionDurationText}）" : "关闭")}，处理文件夹={_options.OutputRootDir}，存储文件夹={_options.RetentionFolder}");
         if (_options.UsePreviewStreamCapture)
         {
             Log("抓图", "预览流抓帧实验开关已开启；当前版本仍使用高速 JPEG 抓图路径，实时流抓帧将在下一步接入。");
@@ -1965,14 +2465,24 @@ internal sealed class CameraIoCaptureService : IDisposable
         Log("分段", $"来源={triggerSource ?? "未知触发"}，SDK 抓图并同步保存={stopwatch.ElapsedMilliseconds}ms");
         Log("抓图", $"已保存：{filePath}，耗时={stopwatch.ElapsedMilliseconds}ms");
         Captured?.Invoke(filePath, showPreview);
-        EnforceImageCountLimit();
+        EnforceRetentionPolicies();
     }
 
-    private void EnforceImageCountLimit()
+    private void EnforceRetentionPolicies()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         if (_options.LimitImageCount)
         {
-            ImageRetentionManager.Enforce(_cameraCaptureRoot, _options.MaxImageCount, Log);
+            ImageRetentionManager.Enforce(_options.OutputRootDir, _options.MaxImageCount, Log);
+        }
+
+        if (_options.LimitImageAge)
+        {
+            ImageRetentionManager.EnforceAge(_options.RetentionFolder, _options.RetentionTimeSpan, Log);
         }
     }
 
@@ -2015,6 +2525,7 @@ internal sealed class CameraIoCaptureService : IDisposable
         }
 
         _disposed = true;
+        _retentionTimer.Dispose();
 
         if (_alarmHandle >= 0)
         {
@@ -2325,7 +2836,8 @@ internal sealed class CameraIoCaptureService : IDisposable
     private static byte[] ToFixedAnsiBytes(string value, int size)
     {
         var buffer = new byte[size];
-        var bytes = Encoding.Default.GetBytes(value);
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var bytes = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.ANSICodePage).GetBytes(value);
         Array.Copy(bytes, buffer, Math.Min(bytes.Length, size - 1));
         return buffer;
     }
@@ -2380,12 +2892,30 @@ internal sealed record CaptureOptions(
     string OutputRootDir,
     bool LimitImageCount,
     int MaxImageCount,
+    bool LimitImageAge,
+    string RetentionFolder,
+    int RetentionDuration,
     string LogDir,
-    string SdkDir);
+    string SdkDir)
+{
+    public TimeSpan RetentionTimeSpan => TimeSpan.FromDays(RetentionDuration);
+
+    public string RetentionDurationText => $"{RetentionDuration} 天";
+}
 
 internal sealed record MultiCameraConfig(
     int CameraCount,
-    List<CameraPanelConfig> Cameras);
+    List<CameraPanelConfig> Cameras,
+    TcpMonitorConfig? TcpMonitor = null,
+    StartupOptions? Startup = null);
+
+internal sealed record StartupOptions(
+    bool AutoCaptureOnLaunch,
+    bool AutoTcpOnLaunch,
+    bool MinimizeAfterLaunch)
+{
+    public static StartupOptions Default { get; } = new(true, true, true);
+}
 
 internal sealed record CameraPanelConfig(
     string Ip,
@@ -2400,6 +2930,9 @@ internal sealed record CameraPanelConfig(
     string OutputRootDir,
     bool LimitImageCount,
     int MaxImageCount,
+    bool LimitImageAge,
+    string RetentionFolder,
+    int RetentionDuration,
     string CameraFolder,
     int TriggerMode,
     int AutoTriggerIntervalMs,

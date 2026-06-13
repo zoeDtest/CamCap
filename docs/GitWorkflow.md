@@ -76,7 +76,9 @@ git push origin release/<version>
 以下文件属于构建产物、运行数据或临时文件，不应提交到 Git：
 
 - `bin/`、`obj/`
-- `captures/`
+- `Data/processing/`
+- `Data/storage/`
+- `Config/startup-config.json`
 - `Logs/`、`SdkLog/`、`*.log`
 - 安装器临时 payload / staging 目录
 - 生成的安装包 `.exe`

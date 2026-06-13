@@ -10,11 +10,11 @@
     <ApplicationIcon>assets\camcapture.ico</ApplicationIcon>
     <AssemblyName>CamCapture</AssemblyName>
     <RootNamespace>IoCameraCapture</RootNamespace>
-    <Title>CamCapture 高速版</Title>
-    <Product>CamCapture 高速版</Product>
+    <Title>CamCapture 2.0</Title>
+    <Product>CamCapture 2.0</Product>
     <Company>Imaging</Company>
-    <Version>1.4.2</Version>
-    <FileVersion>1.4.2.0</FileVersion>
+    <Version>2.0.0</Version>
+    <FileVersion>2.0.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,5 +22,6 @@
           LinkBase="native"
           CopyToOutputDirectory="PreserveNewest" />
     <Content Include="assets\camcapture.ico" />
+    <Content Include="assets\Media\*.wav" CopyToOutputDirectory="PreserveNewest" Link="Media\%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

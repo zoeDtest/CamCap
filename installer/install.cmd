@@ -15,7 +15,8 @@ if errorlevel 8 (
   exit /b 1
 )
 
-if not exist "%INSTALL_DIR%\captures" mkdir "%INSTALL_DIR%\captures"
+if not exist "%INSTALL_DIR%\Data\processing" mkdir "%INSTALL_DIR%\Data\processing"
+if not exist "%INSTALL_DIR%\Data\storage" mkdir "%INSTALL_DIR%\Data\storage"
 if not exist "%INSTALL_DIR%\SdkLog" mkdir "%INSTALL_DIR%\SdkLog"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
